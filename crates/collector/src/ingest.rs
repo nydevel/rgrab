@@ -4,9 +4,9 @@ use axum::routing::post;
 use axum::{Json, Router};
 use common::log::LogEntry;
 use common::span::Span;
-use storage::store::InMemoryStore;
+use storage::rocks_store::RocksStore;
 
-pub fn router(store: InMemoryStore) -> Router {
+pub fn router(store: RocksStore) -> Router {
     Router::new()
         .route("/v1/logs", post(ingest_logs))
         .route("/v1/traces", post(ingest_traces))
@@ -14,7 +14,7 @@ pub fn router(store: InMemoryStore) -> Router {
 }
 
 async fn ingest_logs(
-    State(store): State<InMemoryStore>,
+    State(store): State<RocksStore>,
     Json(entries): Json<Vec<LogEntry>>,
 ) -> StatusCode {
     for entry in entries {
@@ -27,7 +27,7 @@ async fn ingest_logs(
 }
 
 async fn ingest_traces(
-    State(store): State<InMemoryStore>,
+    State(store): State<RocksStore>,
     Json(spans): Json<Vec<Span>>,
 ) -> StatusCode {
     for span in spans {

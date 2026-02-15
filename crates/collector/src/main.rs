@@ -1,7 +1,7 @@
 mod ingest;
 
 use anyhow::Result;
-use storage::store::InMemoryStore;
+use storage::rocks_store::RocksStore;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -10,7 +10,9 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    let store = InMemoryStore::new();
+    let data_dir = std::env::var("RGRAB_DATA_DIR").unwrap_or_else(|_| "./data/rgrab".to_string());
+    let store = RocksStore::open(&data_dir)?;
+
     let app = ingest::router(store);
 
     let addr = "0.0.0.0:4317";
