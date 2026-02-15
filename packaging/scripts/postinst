@@ -1,0 +1,20 @@
+#!/bin/sh
+set -e
+
+if ! getent group rgrab >/dev/null 2>&1; then
+    addgroup --system rgrab
+fi
+
+if ! getent passwd rgrab >/dev/null 2>&1; then
+    adduser --system --home /var/lib/rgrab --no-create-home \
+        --ingroup rgrab --disabled-password --shell /usr/sbin/nologin rgrab
+fi
+
+mkdir -p /var/lib/rgrab
+chown rgrab:rgrab /var/lib/rgrab
+
+if [ "$1" = "configure" ]; then
+    systemctl daemon-reload || true
+fi
+
+#DEBHELPER#

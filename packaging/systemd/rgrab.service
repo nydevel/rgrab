@@ -1,0 +1,26 @@
+[Unit]
+Description=rgrab observability server
+Documentation=https://github.com/nydevel/rgrab
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/rgrab
+EnvironmentFile=-/etc/rgrab/rgrab.conf
+Restart=on-failure
+RestartSec=5
+
+User=rgrab
+Group=rgrab
+
+StateDirectory=rgrab
+RuntimeDirectory=rgrab
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/rgrab
+
+[Install]
+WantedBy=multi-user.target
