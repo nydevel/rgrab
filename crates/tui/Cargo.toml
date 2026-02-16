@@ -1,0 +1,19 @@
+[package]
+name = "tui"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "rgrab-tui"
+path = "src/main.rs"
+
+[dependencies]
+common = { path = "../common" }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+reqwest = { workspace = true }

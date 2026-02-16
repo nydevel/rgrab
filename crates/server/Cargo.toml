@@ -16,13 +16,12 @@ section = "net"
 priority = "optional"
 extended-description = """Lightweight observability backend for logs and distributed traces.
 Accepts OpenTelemetry (OTLP) traces, provides Loki-compatible query API,
-and includes a built-in web UI. Uses embedded RocksDB for storage."""
+Uses embedded RocksDB for storage."""
 assets = [
     ["target/release/server", "usr/bin/rgrab", "755"],
-    ["static/**/*", "usr/share/rgrab/static/", "644"],
-    ["../../packaging/config/rgrab.conf", "etc/rgrab/rgrab.conf", "644"],
+    ["../../packaging/config/rgrab.toml", "etc/rgrab/rgrab.toml", "644"],
 ]
-conf-files = ["/etc/rgrab/rgrab.conf"]
+conf-files = ["/etc/rgrab/rgrab.toml"]
 systemd-units = { unit-name = "rgrab", unit-scripts = "../../packaging/systemd", enable = false }
 maintainer-scripts = "../../packaging/scripts"
 
@@ -37,3 +36,6 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
+clap = { workspace = true }
+toml = { workspace = true }
+serde = { workspace = true }

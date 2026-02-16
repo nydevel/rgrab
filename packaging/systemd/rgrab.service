@@ -6,8 +6,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/rgrab
-EnvironmentFile=-/etc/rgrab/rgrab.conf
+ExecStart=/usr/bin/rgrab --config /etc/rgrab/rgrab.toml
 Restart=on-failure
 RestartSec=5
 
