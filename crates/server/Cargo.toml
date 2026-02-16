@@ -19,6 +19,7 @@ Accepts OpenTelemetry (OTLP) traces, provides Loki-compatible query API,
 Uses embedded RocksDB for storage."""
 assets = [
     ["target/release/server", "usr/bin/rgrab", "755"],
+    ["target/release/tui", "usr/bin/rgrab-tui", "755"],
     ["../../packaging/config/rgrab.toml", "etc/rgrab/rgrab.toml", "644"],
 ]
 conf-files = ["/etc/rgrab/rgrab.toml"]
@@ -39,6 +40,3 @@ tower-http = { workspace = true }
 clap = { workspace = true }
 toml = { workspace = true }
 serde = { workspace = true }
-hyper = { version = "1", features = ["server", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1"] }
-tower = "0.5"
