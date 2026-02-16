@@ -114,7 +114,7 @@ fn handle_search_input(app: &mut App, code: KeyCode) {
         }
         KeyCode::Enter => {
             app.input_mode = InputMode::Normal;
-            app.log_scroll = 0;
+            app.log_cursor = 0;
         }
         KeyCode::Backspace => {
             app.search.pop();
@@ -142,8 +142,12 @@ async fn handle_normal_input(app: &mut App, code: KeyCode, client: &ApiClient) {
             app.search.clear();
         }
 
-        KeyCode::Char('j') | KeyCode::Down => scroll_down(app),
-        KeyCode::Char('k') | KeyCode::Up => scroll_up(app),
+        KeyCode::Char('j') | KeyCode::Down => scroll_down(app, 1),
+        KeyCode::Char('k') | KeyCode::Up => scroll_up(app, 1),
+        KeyCode::PageDown => scroll_down(app, page_size(app)),
+        KeyCode::PageUp => scroll_up(app, page_size(app)),
+        KeyCode::Home => scroll_to_top(app),
+        KeyCode::End => scroll_to_end(app),
 
         KeyCode::Char('h') | KeyCode::Left => {
             app.sidebar_focused = true;
@@ -152,14 +156,23 @@ async fn handle_normal_input(app: &mut App, code: KeyCode, client: &ApiClient) {
             app.sidebar_focused = false;
         }
 
+        KeyCode::Char('1') => app.toggle_level(0), // TRACE
+        KeyCode::Char('2') => app.toggle_level(1), // DEBUG
+        KeyCode::Char('3') => app.toggle_level(2), // INFO
+        KeyCode::Char('4') => app.toggle_level(3), // WARN
+        KeyCode::Char('5') => app.toggle_level(4), // ERROR
+        KeyCode::Char('6') => app.toggle_level(5), // FATAL
+
         KeyCode::Enter => handle_enter(app, client).await,
 
         KeyCode::Esc => {
-            if app.expanded_trace.is_some() {
+            if app.selected_log_idx.is_some() {
+                app.selected_log_idx = None;
+            } else if app.expanded_trace.is_some() {
                 app.expanded_trace = None;
             } else if !app.search.is_empty() {
                 app.search.clear();
-                app.log_scroll = 0;
+                app.log_cursor = 0;
             }
         }
 
@@ -181,37 +194,68 @@ async fn handle_normal_input(app: &mut App, code: KeyCode, client: &ApiClient) {
             app.refresh(client).await;
         }
 
+        KeyCode::Char('s') => {
+            app.newest_first = !app.newest_first;
+            app.log_cursor = 0;
+        }
+
         _ => {}
     }
 }
 
-fn scroll_down(app: &mut App) {
+fn scroll_down(app: &mut App, count: usize) {
     if app.sidebar_focused {
         let max = app.sidebar_items().len().saturating_sub(1);
-        app.sidebar_scroll = (app.sidebar_scroll + 1).min(max);
+        app.sidebar_scroll = (app.sidebar_scroll + count).min(max);
     } else {
         match app.tab {
             Tab::Logs => {
                 let max = app.filtered_logs().len().saturating_sub(1);
-                app.log_scroll = (app.log_scroll + 1).min(max);
+                app.log_cursor = (app.log_cursor + count).min(max);
             }
             Tab::Traces => {
                 let max = app.unique_traces().len().saturating_sub(1);
-                app.trace_scroll = (app.trace_scroll + 1).min(max);
+                app.trace_scroll = (app.trace_scroll + count).min(max);
             }
         }
     }
 }
 
-fn scroll_up(app: &mut App) {
+fn scroll_up(app: &mut App, count: usize) {
     if app.sidebar_focused {
-        app.sidebar_scroll = app.sidebar_scroll.saturating_sub(1);
+        app.sidebar_scroll = app.sidebar_scroll.saturating_sub(count);
     } else {
         match app.tab {
-            Tab::Logs => app.log_scroll = app.log_scroll.saturating_sub(1),
-            Tab::Traces => app.trace_scroll = app.trace_scroll.saturating_sub(1),
+            Tab::Logs => app.log_cursor = app.log_cursor.saturating_sub(count),
+            Tab::Traces => app.trace_scroll = app.trace_scroll.saturating_sub(count),
         }
     }
+}
+
+fn scroll_to_top(app: &mut App) {
+    if app.sidebar_focused {
+        app.sidebar_scroll = 0;
+    } else {
+        match app.tab {
+            Tab::Logs => app.log_cursor = 0,
+            Tab::Traces => app.trace_scroll = 0,
+        }
+    }
+}
+
+fn scroll_to_end(app: &mut App) {
+    if app.sidebar_focused {
+        app.sidebar_scroll = app.sidebar_items().len().saturating_sub(1);
+    } else {
+        match app.tab {
+            Tab::Logs => app.log_cursor = app.filtered_logs().len().saturating_sub(1),
+            Tab::Traces => app.trace_scroll = app.unique_traces().len().saturating_sub(1),
+        }
+    }
+}
+
+fn page_size(app: &App) -> usize {
+    app.limit.min(20)
 }
 
 async fn handle_enter(app: &mut App, client: &ApiClient) {
@@ -221,8 +265,10 @@ async fn handle_enter(app: &mut App, client: &ApiClient) {
             let label = label.clone();
             let value = value.clone();
             app.toggle_label(&label, &value);
-            app.log_scroll = 0;
+            app.log_cursor = 0;
         }
+    } else if app.tab == Tab::Logs {
+        app.select_current_log();
     } else if app.tab == Tab::Traces {
         let groups = app.unique_traces();
         if let Some(group) = groups.get(app.trace_scroll) {

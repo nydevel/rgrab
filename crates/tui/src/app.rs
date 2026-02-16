@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use common::log::LogEntry;
+use common::log::{LogEntry, LogLevel};
 use common::span::Span;
 
 use crate::client::ApiClient;
@@ -17,6 +17,15 @@ pub enum InputMode {
     Search,
 }
 
+pub const ALL_LEVELS: [LogLevel; 6] = [
+    LogLevel::Trace,
+    LogLevel::Debug,
+    LogLevel::Info,
+    LogLevel::Warn,
+    LogLevel::Error,
+    LogLevel::Fatal,
+];
+
 pub struct App {
     pub tab: Tab,
     pub logs: Vec<LogEntry>,
@@ -27,7 +36,7 @@ pub struct App {
     pub selected_labels: HashMap<String, String>,
     pub search: String,
     pub input_mode: InputMode,
-    pub log_scroll: usize,
+    pub log_cursor: usize,
     pub trace_scroll: usize,
     pub sidebar_scroll: usize,
     pub sidebar_focused: bool,
@@ -38,6 +47,9 @@ pub struct App {
     pub error: Option<String>,
     pub connected: bool,
     pub server_url: String,
+    pub level_enabled: [bool; 6],
+    pub selected_log_idx: Option<usize>,
+    pub newest_first: bool,
 }
 
 impl App {
@@ -52,7 +64,7 @@ impl App {
             selected_labels: HashMap::new(),
             search: String::new(),
             input_mode: InputMode::Normal,
-            log_scroll: 0,
+            log_cursor: 0,
             trace_scroll: 0,
             sidebar_scroll: 0,
             sidebar_focused: false,
@@ -63,7 +75,22 @@ impl App {
             error: None,
             connected: false,
             server_url: server_url.to_string(),
+            level_enabled: [true; 6],
+            selected_log_idx: None,
+            newest_first: true,
         }
+    }
+
+    pub fn toggle_level(&mut self, idx: usize) {
+        if idx < self.level_enabled.len() {
+            self.level_enabled[idx] = !self.level_enabled[idx];
+            self.log_cursor = 0;
+        }
+    }
+
+    pub fn is_level_enabled(&self, level: LogLevel) -> bool {
+        let idx = level_index(level);
+        self.level_enabled[idx]
     }
 
     pub async fn refresh(&mut self, client: &ApiClient) {
@@ -100,11 +127,11 @@ impl App {
     }
 
     async fn refresh_label_values(&mut self, client: &ApiClient) {
-        for label in &self.labels {
-            if !self.label_values.contains_key(label)
-                && let Ok(values) = client.fetch_label_values(label).await
-            {
-                self.label_values.insert(label.clone(), values);
+        const SIDEBAR_LABELS: &[&str] = &["service", "environment"];
+
+        for label in SIDEBAR_LABELS {
+            if let Ok(values) = client.fetch_label_values(label).await {
+                self.label_values.insert((*label).to_string(), values);
             }
         }
     }
@@ -119,13 +146,21 @@ impl App {
     }
 
     pub fn filtered_logs(&self) -> Vec<&LogEntry> {
-        self.logs
+        let mut result: Vec<&LogEntry> = self
+            .logs
             .iter()
             .filter(|log| {
+                if !self.is_level_enabled(log.level) {
+                    return false;
+                }
                 if !self.search.is_empty() {
                     let search_lower = self.search.to_lowercase();
-                    let msg_match = log.message.to_lowercase().contains(&search_lower);
-                    if !msg_match {
+                    let in_msg = log.message.to_lowercase().contains(&search_lower);
+                    let in_labels = log.labels.iter().any(|(k, v)| {
+                        k.to_lowercase().contains(&search_lower)
+                            || v.to_lowercase().contains(&search_lower)
+                    });
+                    if !in_msg && !in_labels {
                         return false;
                     }
                 }
@@ -137,7 +172,13 @@ impl App {
                 }
                 true
             })
-            .collect()
+            .collect();
+        if self.newest_first {
+            result.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        } else {
+            result.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        }
+        result
     }
 
     pub fn unique_traces(&self) -> Vec<TraceGroup> {
@@ -180,20 +221,70 @@ impl App {
 
     pub fn sidebar_items(&self) -> Vec<SidebarItem> {
         let mut items = Vec::new();
-        for label in &self.labels {
-            items.push(SidebarItem::Label(label.clone()));
-            if let Some(values) = self.label_values.get(label) {
-                for val in values {
-                    let selected = self.selected_labels.get(label) == Some(val);
-                    items.push(SidebarItem::Value {
-                        label: label.clone(),
-                        value: val.clone(),
-                        selected,
-                    });
-                }
+
+        let services = self
+            .label_values
+            .get("service")
+            .cloned()
+            .unwrap_or_default();
+        let environments = self
+            .label_values
+            .get("environment")
+            .cloned()
+            .unwrap_or_default();
+
+        for svc in &services {
+            let svc_selected = self.selected_labels.get("service") == Some(svc);
+            items.push(SidebarItem::Label(svc.clone()));
+            items.push(SidebarItem::Value {
+                label: "service".to_string(),
+                value: svc.clone(),
+                selected: svc_selected,
+            });
+
+            for env in &environments {
+                let env_selected = self.selected_labels.get("environment") == Some(env);
+                items.push(SidebarItem::Value {
+                    label: "environment".to_string(),
+                    value: env.clone(),
+                    selected: env_selected,
+                });
             }
         }
+
+        if services.is_empty() && !environments.is_empty() {
+            items.push(SidebarItem::Label("environment".to_string()));
+            for env in &environments {
+                let selected = self.selected_labels.get("environment") == Some(env);
+                items.push(SidebarItem::Value {
+                    label: "environment".to_string(),
+                    value: env.clone(),
+                    selected,
+                });
+            }
+        }
+
         items
+    }
+
+    pub fn select_current_log(&mut self) {
+        let filtered = self.filtered_logs();
+        if filtered.is_empty() {
+            self.selected_log_idx = None;
+            return;
+        }
+        let idx = self.log_cursor.min(filtered.len().saturating_sub(1));
+        if self.selected_log_idx == Some(idx) {
+            self.selected_log_idx = None;
+        } else {
+            self.selected_log_idx = Some(idx);
+        }
+    }
+
+    pub fn selected_log_labels(&self) -> Option<&HashMap<String, String>> {
+        let idx = self.selected_log_idx?;
+        let filtered = self.filtered_logs();
+        filtered.get(idx).map(|log| &log.labels)
     }
 
     pub fn toggle_label(&mut self, label: &str, value: &str) {
@@ -223,4 +314,26 @@ pub enum SidebarItem {
         value: String,
         selected: bool,
     },
+}
+
+fn level_index(level: LogLevel) -> usize {
+    match level {
+        LogLevel::Trace => 0,
+        LogLevel::Debug => 1,
+        LogLevel::Info => 2,
+        LogLevel::Warn => 3,
+        LogLevel::Error => 4,
+        LogLevel::Fatal => 5,
+    }
+}
+
+pub fn level_name(level: LogLevel) -> &'static str {
+    match level {
+        LogLevel::Trace => "TRACE",
+        LogLevel::Debug => "DEBUG",
+        LogLevel::Info => "INFO",
+        LogLevel::Warn => "WARN",
+        LogLevel::Error => "ERROR",
+        LogLevel::Fatal => "FATAL",
+    }
 }
