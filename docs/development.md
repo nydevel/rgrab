@@ -1,12 +1,12 @@
-# Разработка rgrab
+# Developing rgrab
 
-## Требования
+## Requirements
 
 - **Rust** >= 1.85 (edition 2024)
-- **libclang** — необходим для сборки `rocksdb` crate (bindgen)
-- **Linux** (основная платформа)
+- **libclang** -- required for building the `rocksdb` crate (bindgen)
+- **Linux** (primary platform)
 
-### Установка зависимостей
+### Installing Dependencies
 
 Ubuntu/Debian:
 ```bash
@@ -18,123 +18,133 @@ macOS:
 brew install llvm
 ```
 
-Если `libclang` установлен не в стандартном пути, создайте `.cargo/config.toml`:
+If `libclang` is installed in a non-standard path, create `.cargo/config.toml`:
 ```toml
 [env]
 LIBCLANG_PATH = "/path/to/llvm/lib"
 ```
 
-## Сборка
+## Building
 
 ```bash
-# Проверка компиляции (быстро, без линковки)
+# Check compilation (fast, no linking)
 cargo check --workspace
 
-# Полная сборка
+# Full build
 cargo build --workspace
 
-# Release-сборка сервера
+# Release build (server)
 cargo build --release -p server
 
-# Release-сборка TUI
+# Release build (TUI)
 cargo build --release -p tui
 ```
 
-## Запуск в dev-режиме
+## Running in Dev Mode
 
-### Сервер
+### Server
 
 ```bash
-# С дефолтами (порт 3000, БД в ./data/rgrab, log_level=info)
+# With defaults (port 3000, DB at ./data/rgrab, log_level=info)
 cargo run -p server
 
-# С CLI параметрами
+# With CLI parameters
 cargo run -p server -- --data-dir ./my-data --listen 127.0.0.1:8080 --log-level debug
 
-# С TOML конфигом
-cargo run -p server -- --config my-config.toml
+# With TOML config
+cargo run -p server -- --config rgrab.toml
 
-# Справка
+# Help
 cargo run -p server -- --help
 ```
 
-После запуска доступны все эндпоинты на одном порту:
+Once started, all endpoints are available on a single port:
 - Ingest: `POST /v1/logs`, `POST /v1/traces`, `POST /otlp/v1/traces`
 - Query: `GET /api/logs`, `GET /api/traces`
 - Loki API: `/rgrab/api/v1/*`
 
-### TUI-клиент
+### TUI Client
 
 ```bash
-# Подключение к локальному серверу (http://localhost:3000)
+# Connect to local server (http://localhost:3000)
 cargo run -p tui
 
-# Подключение к удалённому серверу
+# Connect to a remote server
 cargo run -p tui -- --server http://192.168.1.100:3000
 ```
 
-TUI — это HTTP-клиент, сервер должен быть запущен отдельно.
+The TUI is an HTTP client -- the server must be running separately.
 
-## Конфигурация сервера
+## Server Configuration
 
-Три способа (приоритет: CLI > TOML > defaults):
+Three methods (priority: CLI > TOML > defaults):
 
-### CLI аргументы
+### CLI Arguments
 
-| Аргумент       | Описание                          | По умолчанию           |
-|----------------|-----------------------------------|------------------------|
-| `--config, -c` | Путь к TOML конфигу               | `/etc/rgrab/rgrab.toml`|
-| `--data-dir, -d`| Директория RocksDB               | `./data/rgrab`         |
-| `--listen, -l` | Адрес и порт                      | `0.0.0.0:3000`         |
-| `--log-level`  | Уровень логирования               | `info`                 |
+| Argument         | Description                       | Default                |
+|------------------|-----------------------------------|------------------------|
+| `--config, -c`   | Path to TOML config              | `/etc/rgrab/rgrab.toml`|
+| `--data-dir, -d` | RocksDB directory                | `./data/rgrab`         |
+| `--listen, -l`   | Listen address and port          | `0.0.0.0:3000`         |
+| `--log-level`    | Log level                        | `info`                 |
 
-### TOML конфиг
+### TOML Config
 
 ```toml
 data_dir = "/var/lib/rgrab"
 listen = "0.0.0.0:3000"
 log_level = "info"
+
+[docker]
+enabled = true
+socket = "/var/run/docker.sock"
+
+[[docker.containers]]
+name = "my-app"
+service = "my-app"
+environment = "production"
+tail = 200
 ```
 
-CLI аргументы перекрывают значения из конфига. Если конфиг не найден — используются defaults.
+CLI arguments override values from the config file. If the config file is not found, defaults are used.
 
-## Проверка кода
+## Code Quality
 
 ```bash
-# Линтер
+# Linter
 cargo clippy --workspace
 
-# Форматирование
+# Formatting
 cargo fmt --all
 
-# Проверка форматирования (CI)
+# Check formatting (CI)
 cargo fmt --all -- --check
 ```
 
-## Структура данных в RocksDB
+## RocksDB Data Structure
 
-БД создаётся автоматически при первом запуске. Директория содержит файлы RocksDB.
+The database is created automatically on first startup. The directory contains RocksDB files.
 
-Две column families:
-- `logs` — лог-записи (ключ: timestamp + sequence, значение: JSON)
-- `spans` — спаны (ключ: `trace_id:span_id`, значение: JSON)
+Two column families:
+- `logs` -- log entries (key: timestamp + sequence, value: JSON)
+- `spans` -- spans (key: `trace_id:span_id`, value: JSON)
 
-Для очистки БД — удалить директорию:
+To reset the database, delete the directory:
 ```bash
 rm -rf ./data/rgrab
 ```
 
-## Быстрая проверка работоспособности
+## Quick Smoke Test
 
 ```bash
-# 1. Запустить сервер
-cargo run -p server &
+# 1. Start the server
+cargo run -p server -- --config rgrab.toml &
 
-# 2. Отправить лог
+# 2. Send a log entry
 curl -s -X POST http://localhost:3000/v1/logs \
   -H 'Content-Type: application/json' \
   -d '[{
-    "timestamp": "2024-01-01T12:00:00Z",
+    "timestamp": "2025-01-01T12:00:00Z",
     "level": "INFO",
     "message": "Hello from rgrab",
     "labels": {"service": "test", "env": "dev"},
@@ -142,9 +152,9 @@ curl -s -X POST http://localhost:3000/v1/logs \
     "span_id": null
   }]'
 
-# 3. Прочитать логи через API
+# 3. Read logs via API
 curl -s http://localhost:3000/api/logs | python3 -m json.tool
 
-# 4. Открыть TUI
+# 4. Open TUI
 cargo run -p tui
 ```

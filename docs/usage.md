@@ -1,82 +1,84 @@
-# Использование rgrab
+# Using rgrab
 
-## Запуск сервера
+## Starting the Server
 
 ```bash
-# Минимальный запуск (дефолты: порт 3000, БД ./data/rgrab)
+# Minimal startup (defaults: port 3000, DB at ./data/rgrab)
 rgrab
 
-# С CLI параметрами
+# With CLI parameters
 rgrab --data-dir /var/lib/rgrab --listen 0.0.0.0:3000 --log-level info
 
-# С TOML конфигом
+# With TOML config
 rgrab --config /etc/rgrab/rgrab.toml
 
-# Dev-режим через cargo
-cargo run -p server -- --data-dir ./data --log-level debug
+# Dev mode via cargo
+cargo run -p server -- --config rgrab.toml --log-level debug
 ```
 
-## TUI-клиент
+## TUI Client
 
-TUI-клиент подключается к работающему серверу по HTTP.
+The TUI client connects to a running server via HTTP.
 
 ```bash
-# Подключение к локальному серверу
+# Connect to local server
 rgrab-tui
 
-# Подключение к удалённому серверу
+# Connect to a remote server
 rgrab-tui --server http://192.168.1.100:3000
 
-# Dev-режим через cargo
+# Dev mode via cargo
 cargo run -p tui -- --server http://localhost:3000
 ```
 
-### Управление TUI
+### TUI Controls
 
-| Клавиша     | Действие                          |
+| Key         | Action                            |
 |-------------|-----------------------------------|
-| `Tab`       | Переключение Logs / Traces        |
-| `j/k`, `Up/Down` | Скролл                      |
-| `h/l`, `Left/Right` | Переключение sidebar / main |
-| `/`         | Режим поиска                      |
-| `Enter`     | Выбрать лейбл / раскрыть трейс   |
-| `Esc`       | Выход из поиска / закрыть спаны   |
-| `L`         | Включить/выключить live tail      |
-| `r`         | Обновить данные                   |
-| `+/-`       | Увеличить/уменьшить limit         |
-| `q`         | Выход                             |
+| `Tab`       | Switch between Logs / Traces      |
+| `j/k`, `Up/Down` | Scroll                      |
+| `h/l`, `Left/Right` | Switch sidebar / main panel |
+| `/`         | Enter search mode                 |
+| `Enter`     | Select label / expand trace       |
+| `Esc`       | Exit search / close spans         |
+| `L`         | Toggle live tail                  |
+| `r`         | Refresh data                      |
+| `+/-`       | Increase/decrease limit           |
+| `s`         | Toggle sort order                 |
+| `1-6`       | Toggle log levels (TRACE..FATAL)  |
+| `q`         | Quit                              |
 
-При отсутствии подключения к серверу TUI показывает popup с адресом сервера и ошибкой. Переподключение происходит автоматически при включённом live tail.
+When the server is unavailable, the TUI shows a popup with the server address and error. Reconnection happens automatically when live tail is enabled.
 
 ---
 
-## Подключение приложений к rgrab
+## Connecting Applications to rgrab
 
-### Отправка логов (JSON)
+### Sending Logs (JSON)
 
 ```bash
 curl -X POST http://localhost:3000/v1/logs \
   -H 'Content-Type: application/json' \
   -d '[
     {
-      "timestamp": "2024-01-15T10:30:00Z",
+      "timestamp": "2025-01-15T10:30:00Z",
       "level": "INFO",
       "message": "User logged in",
       "labels": {
         "service": "auth",
-        "env": "production",
+        "environment": "production",
         "host": "web-01"
       },
       "trace_id": "abc123",
       "span_id": "span456"
     },
     {
-      "timestamp": "2024-01-15T10:30:01Z",
+      "timestamp": "2025-01-15T10:30:01Z",
       "level": "ERROR",
       "message": "Database connection failed",
       "labels": {
         "service": "api",
-        "env": "production"
+        "environment": "production"
       },
       "trace_id": null,
       "span_id": null
@@ -84,9 +86,9 @@ curl -X POST http://localhost:3000/v1/logs \
   ]'
 ```
 
-Уровни логирования: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`.
+Log levels: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`.
 
-### Отправка трейсов (JSON)
+### Sending Traces (JSON)
 
 ```bash
 curl -X POST http://localhost:3000/v1/traces \
@@ -98,8 +100,8 @@ curl -X POST http://localhost:3000/v1/traces \
       "parent_span_id": null,
       "operation_name": "HTTP GET /users",
       "service_name": "api-gateway",
-      "start_time": "2024-01-15T10:30:00Z",
-      "end_time": "2024-01-15T10:30:00.250Z",
+      "start_time": "2025-01-15T10:30:00Z",
+      "end_time": "2025-01-15T10:30:00.250Z",
       "status": "OK",
       "attributes": {"http.method": "GET", "http.status_code": "200"},
       "events": []
@@ -107,11 +109,11 @@ curl -X POST http://localhost:3000/v1/traces \
   ]'
 ```
 
-Статусы спанов: `UNSET`, `OK`, `ERROR`.
+Span statuses: `UNSET`, `OK`, `ERROR`.
 
-### Отправка трейсов через OpenTelemetry (OTLP HTTP+JSON)
+### Sending Traces via OpenTelemetry (OTLP HTTP+JSON)
 
-rgrab поддерживает приём трейсов в стандартном формате OpenTelemetry. Это позволяет подключить любое приложение, использующее OpenTelemetry SDK.
+rgrab supports trace ingestion in the standard OpenTelemetry format. This allows connecting any application using the OpenTelemetry SDK.
 
 ```bash
 curl -X POST http://localhost:3000/otlp/v1/traces \
@@ -151,9 +153,9 @@ curl -X POST http://localhost:3000/otlp/v1/traces \
   }'
 ```
 
-#### Настройка OpenTelemetry SDK
+#### Configuring OpenTelemetry SDKs
 
-Для подключения приложения укажите OTLP HTTP exporter endpoint:
+Point the OTLP HTTP exporter endpoint to rgrab:
 
 **Python** (opentelemetry-sdk):
 ```python
@@ -186,13 +188,13 @@ let exporter = opentelemetry_otlp::SpanExporter::builder()
     .build()?;
 ```
 
-**Переменная окружения** (универсально):
+**Environment variable** (universal):
 ```bash
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:3000
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
 ```
 
-### Отправка логов в формате Loki
+### Sending Logs in Loki Format
 
 ```bash
 curl -X POST http://localhost:3000/rgrab/api/v1/push \
@@ -203,7 +205,7 @@ curl -X POST http://localhost:3000/rgrab/api/v1/push \
         "stream": {
           "service": "auth",
           "level": "info",
-          "env": "production"
+          "environment": "production"
         },
         "values": [
           ["1705312200000000000", "User logged in"],
@@ -214,127 +216,150 @@ curl -X POST http://localhost:3000/rgrab/api/v1/push \
   }'
 ```
 
-Формат values: `["timestamp_nanoseconds", "message", {metadata}]`.
-Третий элемент (metadata) опционален. Может содержать `trace_id` и `span_id`.
+Values format: `["timestamp_nanoseconds", "message", {metadata}]`.
+The third element (metadata) is optional. May contain `trace_id` and `span_id`.
+
+### Collecting Docker Container Logs
+
+Enable the Docker collector in the server config:
+
+```toml
+[docker]
+enabled = true
+socket = "/var/run/docker.sock"
+
+[[docker.containers]]
+name = "my-app"
+service = "backend"
+environment = "production"
+tail = 200
+
+[[docker.containers]]
+name = "postgres"
+service = "postgres"
+environment = "production"
+```
+
+The collector automatically attaches to configured containers when they start and detaches when they stop. It reconnects if the Docker daemon restarts.
 
 ---
 
-## Запросы к API
+## Querying the API
 
 ### Native API
 
 ```bash
-# Последние 100 логов
+# Latest 100 logs
 curl http://localhost:3000/api/logs
 
-# Последние 10 логов
+# Latest 10 logs
 curl http://localhost:3000/api/logs?limit=10
 
-# Все спаны конкретного трейса
+# All spans for a specific trace
 curl http://localhost:3000/api/traces?trace_id=abc123
 
-# Последние 50 спанов (все трейсы)
+# Latest 50 spans (all traces)
 curl http://localhost:3000/api/traces?limit=50
 ```
 
-### Loki-совместимый API
+### Loki-compatible API
 
-#### Запрос логов
+#### Querying Logs
 
 ```bash
-# Все логи сервиса auth
+# All logs from the auth service
 curl 'http://localhost:3000/rgrab/api/v1/query?query={service="auth"}'
 
-# Логи уровня error, последние 10
+# Error-level logs, latest 10
 curl 'http://localhost:3000/rgrab/api/v1/query?query={level="error"}&limit=10'
 
-# С направлением (старые первыми)
+# With direction (oldest first)
 curl 'http://localhost:3000/rgrab/api/v1/query?query={service="api"}&direction=forward'
 ```
 
-Параметры:
-| Параметр    | Обязателен | Описание                              | По умолчанию |
-|-------------|------------|---------------------------------------|--------------|
-| `query`     | да         | Label selector: `{key="val"}`         | -            |
-| `limit`     | нет        | Макс. количество записей              | 100          |
-| `time`      | нет        | Timestamp в наносекундах (конец)      | сейчас       |
-| `direction` | нет        | `forward` или `backward`              | backward     |
+Parameters:
+| Parameter   | Required | Description                           | Default  |
+|-------------|----------|---------------------------------------|----------|
+| `query`     | yes      | Label selector: `{key="val"}`         | -        |
+| `limit`     | no       | Max number of entries                 | 100      |
+| `time`      | no       | Timestamp in nanoseconds (end)        | now      |
+| `direction` | no       | `forward` or `backward`               | backward |
 
-#### Запрос за диапазон времени
+#### Time Range Query
 
 ```bash
 curl 'http://localhost:3000/rgrab/api/v1/query_range?query={service="api"}&start=1705312200000000000&end=1705315800000000000'
 ```
 
-#### Лейблы
+#### Labels
 
 ```bash
-# Список всех имён лейблов
+# List all label names
 curl http://localhost:3000/rgrab/api/v1/labels
 
-# Все значения конкретного лейбла
+# All values for a specific label
 curl http://localhost:3000/rgrab/api/v1/label/service/values
 ```
 
 ---
 
-## Синтаксис label selector
+## Label Selector Syntax
 
-| Оператор | Значение           | Пример                    |
+| Operator | Meaning            | Example                   |
 |----------|--------------------|---------------------------|
-| `=`      | Точное совпадение  | `{service="auth"}`        |
-| `!=`     | Не равно           | `{level!="debug"}`        |
-| `=~`     | Regex совпадение   | `{service=~"api.*"}`      |
-| `!~`     | Regex не совпадает | `{env!~"dev\|staging"}`   |
+| `=`      | Exact match        | `{service="auth"}`        |
+| `!=`     | Not equal          | `{level!="debug"}`        |
+| `=~`     | Regex match        | `{service=~"api.*"}`      |
+| `!~`     | Regex not match    | `{env!~"dev\|staging"}`   |
 
-Примеры:
+Examples:
 ```
 {service="auth"}
 {service="auth", level="error"}
-{service=~"(auth|api)", env="production"}
+{service=~"(auth|api)", environment="production"}
 {service="auth", level!="trace", level!="debug"}
 {}
 ```
 
 ---
 
-## Интеграция с Grafana
+## Grafana Integration
 
-1. В Grafana добавить Data Source типа **Loki**
+1. In Grafana, add a Data Source of type **Loki**
 2. URL: `http://<rgrab-host>:3000/rgrab`
-3. Сохранить и проверить подключение
-4. В Explore выбрать datasource и писать запросы в формате label selector
+3. Save and test the connection
+4. In Explore, select the datasource and write queries using label selector format
 
 ---
 
-## Примеры
+## Examples
 
-### Мониторинг ошибок
+### Monitoring Errors
 
 ```bash
-# Все ошибки за последний час
+# All errors in the last hour
 curl 'http://localhost:3000/rgrab/api/v1/query_range?query={level="error"}&start='$(date -d '1 hour ago' +%s)000000000'&end='$(date +%s)000000000
 
-# Ошибки конкретного сервиса
+# Errors for a specific service
 curl 'http://localhost:3000/rgrab/api/v1/query?query={service="api",level=~"error|fatal"}&limit=50'
 ```
 
-### Отслеживание трейса
+### Tracing a Request
 
 ```bash
-# Все спаны трейса
+# All spans for a trace
 curl http://localhost:3000/api/traces?trace_id=abc123
 
-# Логи по trace_id
+# Logs by trace_id
 curl http://localhost:3000/api/logs?limit=1000 | jq '.[] | select(.trace_id == "abc123")'
 ```
 
-### Статистика по лейблам
+### Label Statistics
 
 ```bash
-# Какие сервисы отправляют логи
+# Which services are sending logs
 curl http://localhost:3000/rgrab/api/v1/label/service/values
 
-# Какие окружения есть
-curl http://localhost:3000/rgrab/api/v1/label/env/values
+# Which environments exist
+curl http://localhost:3000/rgrab/api/v1/label/environment/values
 ```
