@@ -18,9 +18,10 @@ macOS:
 brew install llvm
 ```
 
-Если `libclang` установлен не в стандартном пути:
-```bash
-export LIBCLANG_PATH=/path/to/llvm/lib
+Если `libclang` установлен не в стандартном пути, создайте `.cargo/config.toml`:
+```toml
+[env]
+LIBCLANG_PATH = "/path/to/llvm/lib"
 ```
 
 ## Сборка
@@ -32,54 +33,70 @@ cargo check --workspace
 # Полная сборка
 cargo build --workspace
 
-# Release-сборка
+# Release-сборка сервера
 cargo build --release -p server
+
+# Release-сборка TUI
+cargo build --release -p tui
 ```
 
 ## Запуск в dev-режиме
 
-### Рекомендуемый способ: единый сервер
+### Сервер
 
 ```bash
-# Запуск с настройками по умолчанию (порт 3000, БД в ./data/rgrab)
+# С дефолтами (порт 3000, БД в ./data/rgrab, log_level=info)
 cargo run -p server
 
-# С кастомными параметрами
-RGRAB_DATA_DIR=./my-data RGRAB_LISTEN=0.0.0.0:8080 cargo run -p server
+# С CLI параметрами
+cargo run -p server -- --data-dir ./my-data --listen 127.0.0.1:8080 --log-level debug
 
-# С включённым логированием
-RUST_LOG=info cargo run -p server
+# С TOML конфигом
+cargo run -p server -- --config my-config.toml
+
+# Справка
+cargo run -p server -- --help
 ```
 
 После запуска доступны все эндпоинты на одном порту:
-- Ingest: `POST /v1/logs`, `POST /v1/traces`
+- Ingest: `POST /v1/logs`, `POST /v1/traces`, `POST /otlp/v1/traces`
 - Query: `GET /api/logs`, `GET /api/traces`
 - Loki API: `/rgrab/api/v1/*`
 
-### Альтернатива: отдельные сервисы
-
-Можно запускать collector и web отдельно, но **с разными директориями БД** (RocksDB блокирует директорию):
+### TUI-клиент
 
 ```bash
-# Терминал 1 — collector (порт 4317)
-RGRAB_DATA_DIR=./data/collector cargo run -p collector
+# Подключение к локальному серверу (http://localhost:3000)
+cargo run -p tui
 
-# Терминал 2 — web (порт 3000)
-RGRAB_DATA_DIR=./data/web cargo run -p web
+# Подключение к удалённому серверу
+cargo run -p tui -- --server http://192.168.1.100:3000
 ```
 
-## Переменные окружения
+TUI — это HTTP-клиент, сервер должен быть запущен отдельно.
 
-| Переменная      | Описание                          | Значение по умолчанию |
-|-----------------|-----------------------------------|-----------------------|
-| `RGRAB_DATA_DIR`| Путь к директории RocksDB         | `./data/rgrab`        |
-| `RGRAB_LISTEN`  | Адрес и порт (только для server)  | `0.0.0.0:3000`        |
-| `RUST_LOG`      | Уровень логирования               | не задано (off)       |
+## Конфигурация сервера
 
-Уровни `RUST_LOG`: `trace`, `debug`, `info`, `warn`, `error`. Можно задать per-crate:
-```bash
-RUST_LOG=server=info,storage=debug cargo run -p server
+Три способа (приоритет: CLI > TOML > defaults):
+
+### CLI аргументы
+
+| Аргумент       | Описание                          | По умолчанию           |
+|----------------|-----------------------------------|------------------------|
+| `--config, -c` | Путь к TOML конфигу               | `/etc/rgrab/rgrab.toml`|
+| `--data-dir, -d`| Директория RocksDB               | `./data/rgrab`         |
+| `--listen, -l` | Адрес и порт                      | `0.0.0.0:3000`         |
+| `--log-level`  | Уровень логирования               | `info`                 |
+
+### TOML конфиг
+
+```toml
+data_dir = "/var/lib/rgrab"
+listen = "0.0.0.0:3000"
+log_level = "info"
 ```
+
+CLI аргументы перекрывают значения из конфига. Если конфиг не найден — используются defaults.
 
 ## Проверка кода
 
@@ -110,10 +127,10 @@ rm -rf ./data/rgrab
 ## Быстрая проверка работоспособности
 
 ```bash
-# Запустить сервер
-RUST_LOG=info cargo run -p server &
+# 1. Запустить сервер
+cargo run -p server &
 
-# Отправить лог
+# 2. Отправить лог
 curl -s -X POST http://localhost:3000/v1/logs \
   -H 'Content-Type: application/json' \
   -d '[{
@@ -125,6 +142,9 @@ curl -s -X POST http://localhost:3000/v1/logs \
     "span_id": null
   }]'
 
-# Прочитать логи
+# 3. Прочитать логи через API
 curl -s http://localhost:3000/api/logs | python3 -m json.tool
+
+# 4. Открыть TUI
+cargo run -p tui
 ```

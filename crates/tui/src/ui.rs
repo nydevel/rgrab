@@ -1,9 +1,10 @@
 use common::log::LogLevel;
 use ratatui::Frame;
+use ratatui::layout::Alignment;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Tabs};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs};
 
 use crate::app::{App, InputMode, SidebarItem, Tab};
 
@@ -25,6 +26,10 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
 
     draw_footer(f, app, chunks[2]);
+
+    if !app.connected {
+        draw_disconnected(f, app);
+    }
 }
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
@@ -178,6 +183,53 @@ fn level_color(level: LogLevel) -> Color {
 }
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(2)])
+        .split(area);
+
+    draw_keyhints(f, app, chunks[0]);
+    draw_status_bar(f, app, chunks[1]);
+}
+
+fn draw_keyhints(f: &mut Frame, app: &App, area: Rect) {
+    let key = |k: &str| {
+        Span::styled(
+            format!(" {k} "),
+            Style::default().fg(Color::Black).bg(Color::DarkGray),
+        )
+    };
+    let desc = |d: &str| Span::styled(format!(" {d}"), Style::default().fg(Color::DarkGray));
+
+    let hints: Vec<Span> = match app.input_mode {
+        InputMode::Search => vec![key("Enter"), desc("apply"), key("Esc"), desc("cancel")],
+        InputMode::Normal => vec![
+            key("Tab"),
+            desc("switch tab"),
+            key("j/k"),
+            desc("scroll"),
+            key("h/l"),
+            desc("sidebar"),
+            key("/"),
+            desc("search"),
+            key("Enter"),
+            desc("select"),
+            key("L"),
+            desc("live"),
+            key("r"),
+            desc("refresh"),
+            key("+/-"),
+            desc("limit"),
+            key("q"),
+            desc("quit"),
+        ],
+    };
+
+    let line = Line::from(hints);
+    f.render_widget(Paragraph::new(line), area);
+}
+
+fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let filtered = app.filtered_logs();
 
     let mut error_count = 0usize;
@@ -219,9 +271,50 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     ]))
     .block(
         Block::default()
-            .borders(Borders::ALL)
+            .borders(Borders::TOP)
             .border_style(Style::default().fg(Color::DarkGray)),
     );
 
     f.render_widget(footer, area);
+}
+
+fn draw_disconnected(f: &mut Frame, app: &App) {
+    let area = f.area();
+    let width = 50u16.min(area.width.saturating_sub(4));
+    let height = 7u16.min(area.height.saturating_sub(2));
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let popup = Rect::new(x, y, width, height);
+
+    let error_detail = app.error.as_deref().unwrap_or("connection refused");
+
+    let text = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "No connection to server",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            app.server_url.as_str(),
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(Span::styled(
+            error_detail,
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let block = Block::default()
+        .title(" Disconnected ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red));
+
+    let paragraph = Paragraph::new(text)
+        .block(block)
+        .alignment(Alignment::Center);
+
+    f.render_widget(Clear, popup);
+    f.render_widget(paragraph, popup);
 }

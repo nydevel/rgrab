@@ -15,6 +15,10 @@ impl ApiClient {
         }
     }
 
+    pub fn base_url(&self) -> String {
+        self.base_url.clone()
+    }
+
     pub async fn fetch_logs(&self, limit: usize) -> Result<Vec<LogEntry>> {
         let url = format!("{}/api/logs?limit={limit}", self.base_url);
         let resp = self.client.get(&url).send().await?.json().await?;

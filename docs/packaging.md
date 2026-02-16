@@ -24,9 +24,8 @@ cargo deb -p server --no-build
 ### Что внутри пакета
 
 ```
-/usr/bin/rgrab                    # бинарник
-/usr/share/rgrab/static/          # веб-интерфейс
-/etc/rgrab/rgrab.conf             # конфигурация (conffile, сохраняется при обновлении)
+/usr/bin/rgrab                    # серверный бинарник
+/etc/rgrab/rgrab.toml             # конфигурация (conffile, сохраняется при обновлении)
 /usr/lib/systemd/system/rgrab.service  # systemd unit
 ```
 
@@ -43,6 +42,32 @@ sudo apt-get install -f  # доустановить зависимости ес�
 
 sudo systemctl enable rgrab
 sudo systemctl start rgrab
+```
+
+## Конфигурация
+
+Файл `/etc/rgrab/rgrab.toml` (создаётся автоматически при установке):
+
+```toml
+data_dir = "/var/lib/rgrab"
+listen = "0.0.0.0:3000"
+log_level = "info"
+```
+
+Systemd запускает сервер с этим конфигом:
+```
+ExecStart=/usr/bin/rgrab --config /etc/rgrab/rgrab.toml
+```
+
+CLI аргументы перекрывают значения из конфига:
+```bash
+# Переопределить порт при запуске
+rgrab --config /etc/rgrab/rgrab.toml --listen 0.0.0.0:8080
+```
+
+После изменения конфига:
+```bash
+sudo systemctl restart rgrab
 ```
 
 ## Настройка APT-репозитория
@@ -74,7 +99,6 @@ cargo deb -p server
 ```bash
 # Создать GPG ключ (один раз)
 gpg --full-generate-key
-# Имя: rgrab, Email: your@email.com
 
 # Экспортировать публичный ключ
 gpg --armor --export rgrab > apt-repo/rgrab.gpg.key
@@ -89,19 +113,6 @@ gpg --armor --export rgrab > apt-repo/rgrab.gpg.key
 - **GitHub Pages** — бесплатно, просто
 - **nginx** — `location /apt { root /var/www; autoindex on; }`
 - **S3/MinIO** — для масштабных деплоев
-
-Структура на сервере:
-```
-https://repo.example.com/
-├── pool/
-│   └── rgrab_0.1.0-1_amd64.deb
-├── Packages
-├── Packages.gz
-├── Release
-├── Release.gpg      (если подписан)
-├── InRelease         (если подписан)
-└── rgrab.gpg.key     (публичный ключ)
-```
 
 #### Подключение на клиенте
 
@@ -143,22 +154,6 @@ sudo journalctl -u rgrab -f
 sudo systemctl status rgrab
 ```
 
-## Конфигурация
-
-Файл `/etc/rgrab/rgrab.conf`:
-
-```
-RGRAB_DATA_DIR=/var/lib/rgrab
-RGRAB_STATIC_DIR=/usr/share/rgrab/static
-RGRAB_LISTEN=0.0.0.0:3000
-RUST_LOG=info
-```
-
-После изменения:
-```bash
-sudo systemctl restart rgrab
-```
-
 ## Обновление
 
 ```bash
@@ -168,7 +163,7 @@ sudo apt-get upgrade rgrab
 sudo dpkg -i rgrab_<new_version>-1_amd64.deb
 ```
 
-Конфиг `/etc/rgrab/rgrab.conf` сохраняется при обновлении (conffile).
+Конфиг `/etc/rgrab/rgrab.toml` сохраняется при обновлении (conffile).
 Данные в `/var/lib/rgrab` не затрагиваются.
 
 ## Удаление
@@ -185,8 +180,6 @@ sudo rm -rf /var/lib/rgrab
 ```
 
 ## Cross-compilation
-
-Для сборки под другую архитектуру:
 
 ```bash
 # Установить target

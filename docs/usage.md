@@ -1,25 +1,58 @@
 # Использование rgrab
 
-## Запуск
+## Запуск сервера
 
 ```bash
-# Минимальный запуск
-cargo run -p server --release
+# Минимальный запуск (дефолты: порт 3000, БД ./data/rgrab)
+rgrab
 
-# Продакшн
-RGRAB_DATA_DIR=/var/lib/rgrab RGRAB_LISTEN=0.0.0.0:3000 RUST_LOG=info \
-  ./target/release/server
+# С CLI параметрами
+rgrab --data-dir /var/lib/rgrab --listen 0.0.0.0:3000 --log-level info
+
+# С TOML конфигом
+rgrab --config /etc/rgrab/rgrab.toml
+
+# Dev-режим через cargo
+cargo run -p server -- --data-dir ./data --log-level debug
 ```
 
-## API
+## TUI-клиент
 
-rgrab предоставляет три группы эндпоинтов:
+TUI-клиент подключается к работающему серверу по HTTP.
 
-### 1. Ingest API — приём данных
+```bash
+# Подключение к локальному серверу
+rgrab-tui
 
-#### POST /v1/logs
+# Подключение к удалённому серверу
+rgrab-tui --server http://192.168.1.100:3000
 
-Приём лог-записей.
+# Dev-режим через cargo
+cargo run -p tui -- --server http://localhost:3000
+```
+
+### Управление TUI
+
+| Клавиша     | Действие                          |
+|-------------|-----------------------------------|
+| `Tab`       | Переключение Logs / Traces        |
+| `j/k`, `Up/Down` | Скролл                      |
+| `h/l`, `Left/Right` | Переключение sidebar / main |
+| `/`         | Режим поиска                      |
+| `Enter`     | Выбрать лейбл / раскрыть трейс   |
+| `Esc`       | Выход из поиска / закрыть спаны   |
+| `L`         | Включить/выключить live tail      |
+| `r`         | Обновить данные                   |
+| `+/-`       | Увеличить/уменьшить limit         |
+| `q`         | Выход                             |
+
+При отсутствии подключения к серверу TUI показывает popup с адресом сервера и ошибкой. Переподключение происходит автоматически при включённом live tail.
+
+---
+
+## Подключение приложений к rgrab
+
+### Отправка логов (JSON)
 
 ```bash
 curl -X POST http://localhost:3000/v1/logs \
@@ -53,9 +86,7 @@ curl -X POST http://localhost:3000/v1/logs \
 
 Уровни логирования: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`.
 
-#### POST /v1/traces
-
-Приём спанов (distributed tracing).
+### Отправка трейсов (JSON)
 
 ```bash
 curl -X POST http://localhost:3000/v1/traces \
@@ -78,47 +109,90 @@ curl -X POST http://localhost:3000/v1/traces \
 
 Статусы спанов: `UNSET`, `OK`, `ERROR`.
 
----
+### Отправка трейсов через OpenTelemetry (OTLP HTTP+JSON)
 
-### 2. Native Query API — запросы
-
-#### GET /api/logs
-
-Получение последних логов.
+rgrab поддерживает приём трейсов в стандартном формате OpenTelemetry. Это позволяет подключить любое приложение, использующее OpenTelemetry SDK.
 
 ```bash
-# Последние 100 логов (по умолчанию)
-curl http://localhost:3000/api/logs
-
-# Последние 10 логов
-curl http://localhost:3000/api/logs?limit=10
+curl -X POST http://localhost:3000/otlp/v1/traces \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "resourceSpans": [
+      {
+        "resource": {
+          "attributes": [
+            {"key": "service.name", "value": {"stringValue": "my-service"}}
+          ]
+        },
+        "scopeSpans": [
+          {
+            "scope": {"name": "my-lib", "version": "1.0.0"},
+            "spans": [
+              {
+                "traceId": "0af7651916cd43dd8448eb211c80319c",
+                "spanId": "b7ad6b7169203331",
+                "parentSpanId": "",
+                "name": "HTTP GET /api/users",
+                "kind": 2,
+                "startTimeUnixNano": "1705312200000000000",
+                "endTimeUnixNano": "1705312200250000000",
+                "attributes": [
+                  {"key": "http.method", "value": {"stringValue": "GET"}},
+                  {"key": "http.status_code", "value": {"intValue": "200"}}
+                ],
+                "events": [],
+                "status": {"code": 1}
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }'
 ```
 
-Ответ: массив `LogEntry` в формате JSON.
+#### Настройка OpenTelemetry SDK
 
-#### GET /api/traces
+Для подключения приложения укажите OTLP HTTP exporter endpoint:
 
-Получение спанов.
+**Python** (opentelemetry-sdk):
+```python
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
+exporter = OTLPSpanExporter(endpoint="http://localhost:3000/otlp/v1/traces")
+```
+
+**Go** (go.opentelemetry.io):
+```go
+exporter, _ := otlptracehttp.New(ctx,
+    otlptracehttp.WithEndpoint("localhost:3000"),
+    otlptracehttp.WithURLPath("/otlp/v1/traces"),
+    otlptracehttp.WithInsecure(),
+)
+```
+
+**Node.js** (@opentelemetry/exporter-trace-otlp-http):
+```javascript
+const exporter = new OTLPTraceExporter({
+  url: 'http://localhost:3000/otlp/v1/traces',
+});
+```
+
+**Rust** (opentelemetry-otlp):
+```rust
+let exporter = opentelemetry_otlp::SpanExporter::builder()
+    .with_http()
+    .with_endpoint("http://localhost:3000/otlp/v1/traces")
+    .build()?;
+```
+
+**Переменная окружения** (универсально):
 ```bash
-# Все спаны для конкретного трейса
-curl http://localhost:3000/api/traces?trace_id=abc123
-
-# Последние 50 спанов (все трейсы)
-curl http://localhost:3000/api/traces?limit=50
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:3000
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
 ```
 
-Ответ: массив `Span` в формате JSON.
-
----
-
-### 3. Loki-совместимый API
-
-Формат ответов совместим с Grafana Loki. Можно подключить как Loki datasource в Grafana, указав URL `http://rgrab-host:3000/rgrab`.
-
-#### POST /rgrab/api/v1/push
-
-Приём логов в формате Loki.
+### Отправка логов в формате Loki
 
 ```bash
 curl -X POST http://localhost:3000/rgrab/api/v1/push \
@@ -140,13 +214,32 @@ curl -X POST http://localhost:3000/rgrab/api/v1/push \
   }'
 ```
 
-Формат values: `["timestamp_nanoseconds", "сообщение", {метаданные}]`.
-Третий элемент (метаданные) опционален. Может содержать `trace_id` и `span_id`.
-Timestamp — строка с Unix epoch в наносекундах.
+Формат values: `["timestamp_nanoseconds", "message", {metadata}]`.
+Третий элемент (metadata) опционален. Может содержать `trace_id` и `span_id`.
 
-#### GET /rgrab/api/v1/query
+---
 
-Запрос логов с фильтрацией по лейблам (instant query).
+## Запросы к API
+
+### Native API
+
+```bash
+# Последние 100 логов
+curl http://localhost:3000/api/logs
+
+# Последние 10 логов
+curl http://localhost:3000/api/logs?limit=10
+
+# Все спаны конкретного трейса
+curl http://localhost:3000/api/traces?trace_id=abc123
+
+# Последние 50 спанов (все трейсы)
+curl http://localhost:3000/api/traces?limit=50
+```
+
+### Loki-совместимый API
+
+#### Запрос логов
 
 ```bash
 # Все логи сервиса auth
@@ -162,118 +255,44 @@ curl 'http://localhost:3000/rgrab/api/v1/query?query={service="api"}&direction=f
 Параметры:
 | Параметр    | Обязателен | Описание                              | По умолчанию |
 |-------------|------------|---------------------------------------|--------------|
-| `query`     | да         | Label selector: `{key="val"}`         | —            |
+| `query`     | да         | Label selector: `{key="val"}`         | -            |
 | `limit`     | нет        | Макс. количество записей              | 100          |
 | `time`      | нет        | Timestamp в наносекундах (конец)      | сейчас       |
 | `direction` | нет        | `forward` или `backward`              | backward     |
 
-Ответ:
-```json
-{
-  "status": "success",
-  "data": {
-    "resultType": "streams",
-    "result": [
-      {
-        "stream": {"service": "auth", "level": "info"},
-        "values": [
-          ["1705312200000000000", "User logged in"],
-          ["1705312201000000000", "Session created"]
-        ]
-      }
-    ],
-    "stats": {}
-  }
-}
-```
-
-#### GET /rgrab/api/v1/query_range
-
-Запрос логов за диапазон времени.
+#### Запрос за диапазон времени
 
 ```bash
-# Логи сервиса api за час
 curl 'http://localhost:3000/rgrab/api/v1/query_range?query={service="api"}&start=1705312200000000000&end=1705315800000000000'
 ```
 
-Параметры:
-| Параметр    | Обязателен | Описание                              | По умолчанию |
-|-------------|------------|---------------------------------------|--------------|
-| `query`     | да         | Label selector                        | —            |
-| `limit`     | нет        | Макс. количество записей              | 100          |
-| `start`     | нет        | Начало диапазона (наносекунды)        | —            |
-| `end`       | нет        | Конец диапазона (наносекунды)         | —            |
-| `direction` | нет        | `forward` или `backward`              | backward     |
-
-Формат ответа идентичен `/rgrab/api/v1/query`.
-
-#### GET /rgrab/api/v1/labels
-
-Список всех имён лейблов.
+#### Лейблы
 
 ```bash
+# Список всех имён лейблов
 curl http://localhost:3000/rgrab/api/v1/labels
 
-# За определённый период
-curl 'http://localhost:3000/rgrab/api/v1/labels?start=1705312200000000000&end=1705315800000000000'
-```
-
-Ответ:
-```json
-{
-  "status": "success",
-  "data": ["env", "host", "level", "service"]
-}
-```
-
-#### GET /rgrab/api/v1/label/{name}/values
-
-Все значения конкретного лейбла.
-
-```bash
+# Все значения конкретного лейбла
 curl http://localhost:3000/rgrab/api/v1/label/service/values
-curl http://localhost:3000/rgrab/api/v1/label/level/values
-```
-
-Ответ:
-```json
-{
-  "status": "success",
-  "data": ["api", "auth", "gateway"]
-}
 ```
 
 ---
 
 ## Синтаксис label selector
 
-Label selector используется в параметре `query` Loki API.
-
-### Операторы
-
 | Оператор | Значение           | Пример                    |
 |----------|--------------------|---------------------------|
 | `=`      | Точное совпадение  | `{service="auth"}`        |
 | `!=`     | Не равно           | `{level!="debug"}`        |
 | `=~`     | Regex совпадение   | `{service=~"api.*"}`      |
-| `!~`     | Regex не совпадает | `{env!~"dev\|staging"}`    |
+| `!~`     | Regex не совпадает | `{env!~"dev\|staging"}`   |
 
-### Примеры
-
+Примеры:
 ```
-# Один лейбл
 {service="auth"}
-
-# Несколько лейблов (AND логика)
 {service="auth", level="error"}
-
-# С regex
 {service=~"(auth|api)", env="production"}
-
-# Исключение
 {service="auth", level!="trace", level!="debug"}
-
-# Пустой селектор — все логи
 {}
 ```
 
@@ -288,7 +307,7 @@ Label selector используется в параметре `query` Loki API.
 
 ---
 
-## Примеры использования
+## Примеры
 
 ### Мониторинг ошибок
 
@@ -303,11 +322,11 @@ curl 'http://localhost:3000/rgrab/api/v1/query?query={service="api",level=~"erro
 ### Отслеживание трейса
 
 ```bash
-# Найти логи по trace_id через native API
-curl http://localhost:3000/api/logs?limit=1000 | jq '.[] | select(.trace_id == "abc123")'
-
-# Найти все спаны трейса
+# Все спаны трейса
 curl http://localhost:3000/api/traces?trace_id=abc123
+
+# Логи по trace_id
+curl http://localhost:3000/api/logs?limit=1000 | jq '.[] | select(.trace_id == "abc123")'
 ```
 
 ### Статистика по лейблам

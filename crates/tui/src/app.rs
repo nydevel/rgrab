@@ -36,10 +36,12 @@ pub struct App {
     pub limit: usize,
     pub should_quit: bool,
     pub error: Option<String>,
+    pub connected: bool,
+    pub server_url: String,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(server_url: &str) -> Self {
         Self {
             tab: Tab::Logs,
             logs: Vec::new(),
@@ -59,6 +61,8 @@ impl App {
             limit: 200,
             should_quit: false,
             error: None,
+            connected: false,
+            server_url: server_url.to_string(),
         }
     }
 
@@ -66,17 +70,20 @@ impl App {
         self.error = None;
 
         match client.fetch_logs(self.limit).await {
-            Ok(logs) => self.logs = logs,
-            Err(e) => self.error = Some(format!("logs: {e}")),
+            Ok(logs) => {
+                self.connected = true;
+                self.logs = logs;
+            }
+            Err(e) => {
+                self.connected = false;
+                self.error = Some(format!("{e}"));
+                return;
+            }
         }
 
         match client.fetch_traces(self.limit).await {
             Ok(traces) => self.traces = traces,
-            Err(e) => {
-                if self.error.is_none() {
-                    self.error = Some(format!("traces: {e}"));
-                }
-            }
+            Err(e) => self.error = Some(format!("traces: {e}")),
         }
 
         match client.fetch_labels().await {

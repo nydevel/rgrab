@@ -62,7 +62,7 @@ async fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     client: &ApiClient,
 ) -> Result<()> {
-    let mut app = App::new();
+    let mut app = App::new(&client.base_url());
     app.refresh(client).await;
 
     let refresh_interval = Duration::from_secs(2);
