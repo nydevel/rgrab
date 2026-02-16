@@ -1,3 +1,17 @@
 data_dir = "/var/lib/rgrab"
 listen = "0.0.0.0:3000"
 log_level = "info"
+
+[docker]
+enabled = false
+# socket = "/var/run/docker.sock"
+#
+# [[docker.containers]]
+# name = "my-app"
+# service = "my-app"
+# environment = "production"
+#
+# [[docker.containers]]
+# name = "nginx"
+# service = "nginx"
+# environment = "production"

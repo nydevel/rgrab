@@ -1,0 +1,14 @@
+[package]
+name = "docker-collector"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+common = { path = "../common" }
+storage = { path = "../storage" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+chrono = { workspace = true }
+bollard = { workspace = true }
+futures-util = { workspace = true }

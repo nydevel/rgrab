@@ -1,11 +1,13 @@
 use std::path::PathBuf;
 
 use clap::Parser;
+use docker_collector::ContainerConfig;
 use serde::Deserialize;
 
 const DEFAULT_DATA_DIR: &str = "./data/rgrab";
 const DEFAULT_LISTEN: &str = "0.0.0.0:3000";
 const DEFAULT_LOG_LEVEL: &str = "info";
+const DEFAULT_DOCKER_SOCKET: &str = "/var/run/docker.sock";
 
 #[derive(Parser)]
 #[command(name = "rgrab", about = "Lightweight observability backend")]
@@ -32,12 +34,27 @@ struct FileConfig {
     data_dir: Option<String>,
     listen: Option<String>,
     log_level: Option<String>,
+    docker: Option<FileDockerConfig>,
+}
+
+#[derive(Deserialize, Default, Clone)]
+struct FileDockerConfig {
+    enabled: Option<bool>,
+    socket: Option<String>,
+    containers: Option<Vec<ContainerConfig>>,
+}
+
+pub struct DockerConfig {
+    pub enabled: bool,
+    pub socket: String,
+    pub containers: Vec<ContainerConfig>,
 }
 
 pub struct Config {
     pub data_dir: String,
     pub listen: String,
     pub log_level: String,
+    pub docker: DockerConfig,
 }
 
 impl Config {
@@ -61,10 +78,20 @@ impl Config {
             .or(file_cfg.log_level)
             .unwrap_or_else(|| DEFAULT_LOG_LEVEL.to_string());
 
+        let docker_file = file_cfg.docker.unwrap_or_default();
+        let docker = DockerConfig {
+            enabled: docker_file.enabled.unwrap_or(false),
+            socket: docker_file
+                .socket
+                .unwrap_or_else(|| DEFAULT_DOCKER_SOCKET.to_string()),
+            containers: docker_file.containers.unwrap_or_default(),
+        };
+
         Self {
             data_dir,
             listen,
             log_level,
+            docker,
         }
     }
 }

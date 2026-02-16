@@ -1,0 +1,11 @@
+data_dir = "./data/rgrab"
+listen = "0.0.0.0:3000"
+log_level = "info"
+
+[docker]
+enabled = true
+socket = "/var/run/docker.sock"
+
+[[docker.containers]]
+name = "postgresql-fixed"
+service = "postgresql"

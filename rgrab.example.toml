@@ -1,0 +1,40 @@
+# rgrab configuration file
+# Copy to rgrab.toml and adjust for your environment
+
+# Directory for RocksDB data storage
+data_dir = "./data/rgrab"
+
+# HTTP server listen address
+listen = "0.0.0.0:3000"
+
+# Log level: trace, debug, info, warn, error
+log_level = "info"
+
+# Docker log collector
+# Streams stdout/stderr from specified containers directly into storage
+[docker]
+enabled = false
+socket = "/var/run/docker.sock"
+
+# Each [[docker.containers]] entry defines a container to watch.
+# - name:        container name (as shown in `docker ps`)
+# - service:     label value for "service" (defaults to container name)
+# - environment: label value for "environment" (optional)
+# - tail:        number of existing log lines to fetch on attach (default: 100)
+
+# [[docker.containers]]
+# name = "my-backend"
+# service = "backend-api"
+# environment = "production"
+# tail = 200
+
+# [[docker.containers]]
+# name = "my-frontend"
+# service = "frontend"
+# environment = "production"
+
+# [[docker.containers]]
+# name = "postgres"
+# service = "postgres"
+# environment = "production"
+# tail = 50
