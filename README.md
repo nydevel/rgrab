@@ -151,17 +151,46 @@ cargo install --path crates/tui
 ### Debian package
 
 ```bash
+# Install cargo-deb (one-time)
 cargo install cargo-deb
-cargo deb -p server
+
+# Build release binaries and package
+cargo build --release
+cargo deb -p server --no-build
+
+# Install locally
 sudo dpkg -i target/debian/rgrab_*.deb
 sudo systemctl enable --now rgrab
 ```
 
 The deb package installs:
-- `/usr/bin/rgrab` -- server
+- `/usr/bin/rgrab` -- server binary
 - `/usr/bin/rgrab-tui` -- terminal UI
-- `/etc/rgrab/rgrab.toml` -- configuration
+- `/etc/rgrab/rgrab.toml` -- configuration (preserved on upgrade)
 - systemd service `rgrab`
+
+### Deploy to server
+
+The `deploy.sh` script builds the deb package and deploys it to a remote server over SSH:
+
+```bash
+# Build, upload, install, and restart in one command
+infra/deploy.sh root@your-server.com
+
+# Or with a custom SSH user
+infra/deploy.sh deploy@192.168.1.10
+```
+
+The script does the following:
+1. Builds release binaries (`cargo build --release`)
+2. Creates a deb package (`cargo deb`)
+3. Copies the package to the server via `scp`
+4. Installs it with `dpkg -i` and restarts the service
+
+Requirements:
+- SSH access to the server (key-based auth recommended)
+- `cargo-deb` installed locally (`cargo install cargo-deb`)
+- The server must be Debian/Ubuntu-based
 
 ## License
 
