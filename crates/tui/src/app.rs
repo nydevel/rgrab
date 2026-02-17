@@ -2,8 +2,18 @@ use std::collections::HashMap;
 
 use common::log::{LogEntry, LogLevel};
 use common::span::Span;
+use ratatui::layout::Rect;
 
 use crate::client::ApiClient;
+
+#[derive(Default)]
+pub struct LayoutAreas {
+    pub header: Rect,
+    pub level_tabs: Rect,
+    pub sidebar: Rect,
+    pub log_list: Rect,
+    pub traces: Rect,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -50,6 +60,7 @@ pub struct App {
     pub level_enabled: [bool; 6],
     pub selected_log_idx: Option<usize>,
     pub newest_first: bool,
+    pub areas: LayoutAreas,
 }
 
 impl App {
@@ -78,6 +89,7 @@ impl App {
             level_enabled: [true; 6],
             selected_log_idx: None,
             newest_first: true,
+            areas: LayoutAreas::default(),
         }
     }
 

@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs};
 
 use crate::app::{self, App, InputMode, SidebarItem, Tab};
 
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -18,11 +18,16 @@ pub fn draw(f: &mut Frame, app: &App) {
         ])
         .split(f.area());
 
+    app.areas.header = chunks[0];
+
     draw_header(f, app, chunks[0]);
 
     match app.tab {
         Tab::Logs => draw_logs_body(f, app, chunks[1]),
-        Tab::Traces => super::ui_traces::draw_traces(f, app, chunks[1]),
+        Tab::Traces => {
+            app.areas.traces = chunks[1];
+            super::ui_traces::draw_traces(f, app, chunks[1]);
+        }
     }
 
     draw_footer(f, app, chunks[2]);
@@ -67,7 +72,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(tabs, area);
 }
 
-fn draw_logs_body(f: &mut Frame, app: &App, area: Rect) {
+fn draw_logs_body(f: &mut Frame, app: &mut App, area: Rect) {
     let v_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -77,6 +82,7 @@ fn draw_logs_body(f: &mut Frame, app: &App, area: Rect) {
         ])
         .split(area);
 
+    app.areas.level_tabs = v_chunks[0];
     draw_level_tabs(f, app, v_chunks[0]);
     draw_search_bar(f, app, v_chunks[1]);
 
@@ -84,6 +90,9 @@ fn draw_logs_body(f: &mut Frame, app: &App, area: Rect) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(20), Constraint::Min(40)])
         .split(v_chunks[2]);
+
+    app.areas.sidebar = h_chunks[0];
+    app.areas.log_list = h_chunks[1];
 
     draw_sidebar(f, app, h_chunks[0]);
     draw_log_list(f, app, h_chunks[1]);
