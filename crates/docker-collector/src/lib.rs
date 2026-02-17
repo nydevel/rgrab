@@ -14,6 +14,7 @@ use tokio::task::JoinHandle;
 
 const DEFAULT_TAIL: usize = 100;
 const RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
+const CONTAINER_ID_SHORT_LEN: usize = 12;
 
 #[derive(Deserialize, Clone)]
 pub struct ContainerConfig {
@@ -90,42 +91,7 @@ async fn attach_configured_containers(
     };
 
     for container in &containers {
-        let id = match &container.id {
-            Some(id) => id.clone(),
-            None => continue,
-        };
-
-        let container_name = extract_container_name(container);
-
-        let Some(cfg) = name_index.get(&container_name) else {
-            continue;
-        };
-
-        let is_running = container.state.as_deref().is_some_and(|s| s == "running");
-
-        if !is_running {
-            tracing::info!("Container {container_name} is not running, waiting for start event");
-            continue;
-        }
-
-        if tasks.contains_key(&id) {
-            continue;
-        }
-
-        let labels = build_labels(cfg, &container_name, &id, container);
-        let tail = cfg.tail.unwrap_or(DEFAULT_TAIL);
-        tracing::info!("Attaching to container {container_name} ({id})");
-
-        let handle = tokio::spawn(streamer::stream_container(
-            docker.clone(),
-            id.clone(),
-            container_name,
-            labels,
-            store.clone(),
-            tail,
-        ));
-
-        tasks.insert(id, handle);
+        try_attach_container(docker, container, name_index, store, tasks).await;
     }
 
     for name in name_index.keys() {
@@ -136,6 +102,43 @@ async fn attach_configured_containers(
             tracing::info!("Container {name} not found in Docker, waiting for start event");
         }
     }
+}
+
+async fn try_attach_container(
+    docker: &Docker,
+    container: &bollard::models::ContainerSummary,
+    name_index: &HashMap<String, ContainerConfig>,
+    store: &RocksStore,
+    tasks: &mut HashMap<String, JoinHandle<()>>,
+) {
+    let Some(id) = &container.id else { return };
+    let container_name = extract_container_name(container);
+    let Some(cfg) = name_index.get(&container_name) else {
+        return;
+    };
+
+    let is_running = container.state.as_deref().is_some_and(|s| s == "running");
+    if !is_running {
+        tracing::info!("Container {container_name} is not running, waiting for start event");
+        return;
+    }
+    if tasks.contains_key(id.as_str()) {
+        return;
+    }
+
+    let labels = build_labels(cfg, &container_name, id, container);
+    let tail = cfg.tail.unwrap_or(DEFAULT_TAIL);
+    tracing::info!("Attaching to container {container_name} ({id})");
+
+    let handle = tokio::spawn(streamer::stream_container(
+        docker.clone(),
+        id.clone(),
+        container_name,
+        labels,
+        store.clone(),
+        tail,
+    ));
+    tasks.insert(id.clone(), handle);
 }
 
 async fn watch_events(
@@ -165,29 +168,35 @@ async fn watch_events(
                 return;
             }
         };
+        handle_event(docker, &event, name_index, store, tasks).await;
+    }
+}
 
-        let action = event.action.as_deref().unwrap_or("");
-        let container_id = match &event.actor {
-            Some(actor) => actor.id.as_deref().unwrap_or(""),
-            None => continue,
-        };
+async fn handle_event(
+    docker: &Docker,
+    event: &bollard::models::EventMessage,
+    name_index: &HashMap<String, ContainerConfig>,
+    store: &RocksStore,
+    tasks: &mut HashMap<String, JoinHandle<()>>,
+) {
+    let action = event.action.as_deref().unwrap_or("");
+    let container_id = match &event.actor {
+        Some(actor) => actor.id.as_deref().unwrap_or(""),
+        None => return,
+    };
+    if container_id.is_empty() {
+        return;
+    }
 
-        if container_id.is_empty() {
-            continue;
-        }
-
-        match action {
-            "start" => {
-                handle_start(docker, container_id, name_index, store, tasks).await;
+    match action {
+        "start" => handle_start(docker, container_id, name_index, store, tasks).await,
+        "die" => {
+            if let Some(handle) = tasks.remove(container_id) {
+                tracing::info!("Container stopped: {container_id}");
+                handle.abort();
             }
-            "die" => {
-                if let Some(handle) = tasks.remove(container_id) {
-                    tracing::info!("Container stopped: {container_id}");
-                    handle.abort();
-                }
-            }
-            _ => {}
         }
+        _ => {}
     }
 }
 
@@ -256,7 +265,7 @@ fn build_labels(
     container_id: &str,
     container: &bollard::models::ContainerSummary,
 ) -> HashMap<String, String> {
-    let short_id = &container_id[..container_id.len().min(12)];
+    let short_id = &container_id[..container_id.len().min(CONTAINER_ID_SHORT_LEN)];
 
     let service = cfg.service.as_deref().unwrap_or(container_name);
 

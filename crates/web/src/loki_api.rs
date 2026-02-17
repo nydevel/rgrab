@@ -30,32 +30,7 @@ async fn loki_push(
     for stream in req.streams {
         let labels = stream.stream;
         for parts in &stream.values {
-            let ts_nanos: i64 = parts
-                .first()
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            let message = parts
-                .get(1)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let (trace_id, span_id) = extract_metadata(parts.get(2));
-
-            let level = labels
-                .get("level")
-                .and_then(|l| parse_log_level(l))
-                .unwrap_or(LogLevel::Info);
-
-            let entry = LogEntry {
-                timestamp: chrono::DateTime::from_timestamp_nanos(ts_nanos),
-                level,
-                message,
-                labels: labels.clone(),
-                trace_id,
-                span_id,
-            };
+            let entry = parse_push_entry(parts, &labels);
             if let Err(e) = store.insert_log(entry).await {
                 tracing::error!("Failed to insert log: {e}");
                 return StatusCode::INTERNAL_SERVER_ERROR;
@@ -63,6 +38,33 @@ async fn loki_push(
         }
     }
     StatusCode::NO_CONTENT
+}
+
+fn parse_push_entry(parts: &[serde_json::Value], labels: &HashMap<String, String>) -> LogEntry {
+    let ts_nanos: i64 = parts
+        .first()
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let message = parts
+        .get(1)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let (trace_id, span_id) = extract_metadata(parts.get(2));
+    let level = labels
+        .get("level")
+        .and_then(|l| parse_log_level(l))
+        .unwrap_or(LogLevel::Info);
+
+    LogEntry {
+        timestamp: chrono::DateTime::from_timestamp_nanos(ts_nanos),
+        level,
+        message,
+        labels: labels.clone(),
+        trace_id,
+        span_id,
+    }
 }
 
 #[derive(Deserialize)]
@@ -81,7 +83,7 @@ async fn loki_query(
 ) -> Result<Json<LokiQueryResponse>, StatusCode> {
     let matchers = parse_label_selector(&params.query).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let end = params.time.as_deref().and_then(|t| t.parse::<i64>().ok());
+    let end = parse_optional_timestamp(params.time.as_deref());
 
     let logs = store
         .query_logs_filtered(matchers, None, end, params.limit, params.direction)
@@ -108,8 +110,8 @@ async fn loki_query_range(
 ) -> Result<Json<LokiQueryResponse>, StatusCode> {
     let matchers = parse_label_selector(&params.query).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let start = params.start.as_deref().and_then(|t| t.parse::<i64>().ok());
-    let end = params.end.as_deref().and_then(|t| t.parse::<i64>().ok());
+    let start = parse_optional_timestamp(params.start.as_deref());
+    let end = parse_optional_timestamp(params.end.as_deref());
 
     let logs = store
         .query_logs_filtered(matchers, start, end, params.limit, params.direction)
@@ -129,8 +131,8 @@ async fn loki_labels(
     State(store): State<RocksStore>,
     Query(params): Query<LokiLabelsParams>,
 ) -> Result<Json<LokiLabelsResponse>, StatusCode> {
-    let start = params.start.as_deref().and_then(|t| t.parse::<i64>().ok());
-    let end = params.end.as_deref().and_then(|t| t.parse::<i64>().ok());
+    let start = parse_optional_timestamp(params.start.as_deref());
+    let end = parse_optional_timestamp(params.end.as_deref());
 
     let names = store
         .label_names(start, end)
@@ -148,8 +150,8 @@ async fn loki_label_values(
     Path(name): Path<String>,
     Query(params): Query<LokiLabelsParams>,
 ) -> Result<Json<LokiLabelsResponse>, StatusCode> {
-    let start = params.start.as_deref().and_then(|t| t.parse::<i64>().ok());
-    let end = params.end.as_deref().and_then(|t| t.parse::<i64>().ok());
+    let start = parse_optional_timestamp(params.start.as_deref());
+    let end = parse_optional_timestamp(params.end.as_deref());
 
     let values = store
         .label_values(name, start, end)
@@ -164,6 +166,10 @@ async fn loki_label_values(
 
 fn default_limit() -> usize {
     100
+}
+
+fn parse_optional_timestamp(s: Option<&str>) -> Option<i64> {
+    s.and_then(|t| t.parse().ok())
 }
 
 fn build_streams_response(logs: Vec<LogEntry>) -> LokiQueryResponse {

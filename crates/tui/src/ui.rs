@@ -54,8 +54,14 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
+    let selected = match app.tab {
+        Tab::Logs => 0,
+        Tab::Traces => 1,
+    };
+
     let tabs = Tabs::new(titles)
         .block(header_block)
+        .select(selected)
         .highlight_style(Style::default().fg(Color::Yellow));
 
     f.render_widget(tabs, area);
@@ -123,47 +129,37 @@ fn draw_search_bar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_level_tabs(f: &mut Frame, app: &App, area: Rect) {
-    let level_color = |level: common::log::LogLevel| -> Color {
-        match level {
-            common::log::LogLevel::Trace => Color::DarkGray,
-            common::log::LogLevel::Debug => Color::Gray,
-            common::log::LogLevel::Info => Color::Blue,
-            common::log::LogLevel::Warn => Color::Yellow,
-            common::log::LogLevel::Error => Color::Red,
-            common::log::LogLevel::Fatal => Color::LightRed,
-        }
-    };
-
     let spans: Vec<Span> = app::ALL_LEVELS
         .iter()
         .enumerate()
-        .flat_map(|(i, &level)| {
-            let name = app::level_name(level);
-            let enabled = app.level_enabled[i];
-            let key_span = Span::styled(
-                format!(" {} ", i + 1),
-                Style::default().fg(Color::Black).bg(Color::DarkGray),
-            );
-            let label_span = if enabled {
-                Span::styled(
-                    format!("{name} "),
-                    Style::default()
-                        .fg(level_color(level))
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else {
-                Span::styled(
-                    format!("{name} "),
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::DIM),
-                )
-            };
-            vec![key_span, label_span]
-        })
+        .flat_map(|(i, &level)| render_level_tab(i, level, app.level_enabled[i]))
         .collect();
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn render_level_tab(index: usize, level: LogLevel, enabled: bool) -> Vec<Span<'static>> {
+    let name = app::level_name(level);
+    let key_span = Span::styled(
+        format!(" {} ", index + 1),
+        Style::default().fg(Color::Black).bg(Color::DarkGray),
+    );
+    let label_span = if enabled {
+        Span::styled(
+            format!("{name} "),
+            Style::default()
+                .fg(level_color(level))
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(
+            format!("{name} "),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        )
+    };
+    vec![key_span, label_span]
 }
 
 fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
@@ -196,22 +192,24 @@ fn draw_log_detail_sidebar(
 
     let items: Vec<ListItem> = sorted
         .iter()
-        .map(|(k, v)| {
-            let line = Line::from(vec![
-                Span::styled(
-                    format!("{k}: "),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(v.to_string(), Style::default().fg(Color::White)),
-            ]);
-            ListItem::new(line)
-        })
+        .map(|(k, v)| render_label_detail(k, v))
         .collect();
 
     let list = List::new(items).block(block);
     f.render_widget(list, area);
+}
+
+fn render_label_detail<'a>(key: &str, value: &str) -> ListItem<'a> {
+    let line = Line::from(vec![
+        Span::styled(
+            format!("{key}: "),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(value.to_string(), Style::default().fg(Color::White)),
+    ]);
+    ListItem::new(line)
 }
 
 fn draw_filter_sidebar(f: &mut Frame, app: &App, border_style: Style, area: Rect) {
@@ -222,55 +220,62 @@ fn draw_filter_sidebar(f: &mut Frame, app: &App, border_style: Style, area: Rect
 
     let items = app.sidebar_items();
     let visible_height = area.height.saturating_sub(2) as usize;
-
-    let scroll_offset = if app.sidebar_focused {
-        let cursor = app.sidebar_scroll;
-        if cursor >= visible_height {
-            cursor - visible_height + 1
-        } else {
-            0
-        }
-    } else {
-        0
-    };
-
+    let scroll_offset =
+        compute_scroll_offset(app.sidebar_focused, app.sidebar_scroll, visible_height);
     let end = (scroll_offset + visible_height).min(items.len());
+
     let list_items: Vec<ListItem> = items[scroll_offset..end]
         .iter()
         .enumerate()
         .map(|(vi, item)| {
-            let global_idx = scroll_offset + vi;
-            match item {
-                SidebarItem::Label(name) => {
-                    let style = Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD);
-                    ListItem::new(Line::from(Span::styled(name.clone(), style))).style(
-                        highlight_if(app.sidebar_focused, global_idx, app.sidebar_scroll),
-                    )
-                }
-                SidebarItem::Value {
-                    value, selected, ..
-                } => {
-                    let prefix = if *selected { " > " } else { "   " };
-                    let style = if *selected {
-                        Style::default().fg(Color::Green)
-                    } else {
-                        Style::default().fg(Color::White)
-                    };
-                    ListItem::new(Line::from(Span::styled(format!("{prefix}{value}"), style)))
-                        .style(highlight_if(
-                            app.sidebar_focused,
-                            global_idx,
-                            app.sidebar_scroll,
-                        ))
-                }
-            }
+            render_sidebar_item(
+                item,
+                app.sidebar_focused,
+                scroll_offset + vi,
+                app.sidebar_scroll,
+            )
         })
         .collect();
 
     let list = List::new(list_items).block(block);
     f.render_widget(list, area);
+}
+
+fn compute_scroll_offset(focused: bool, cursor: usize, visible_height: usize) -> usize {
+    if focused && cursor >= visible_height {
+        cursor - visible_height + 1
+    } else {
+        0
+    }
+}
+
+fn render_sidebar_item(
+    item: &SidebarItem,
+    focused: bool,
+    global_idx: usize,
+    scroll: usize,
+) -> ListItem<'static> {
+    match item {
+        SidebarItem::Label(name) => {
+            let style = Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD);
+            ListItem::new(Line::from(Span::styled(name.clone(), style)))
+                .style(highlight_if(focused, global_idx, scroll))
+        }
+        SidebarItem::Value {
+            value, selected, ..
+        } => {
+            let prefix = if *selected { " > " } else { "   " };
+            let style = if *selected {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            ListItem::new(Line::from(Span::styled(format!("{prefix}{value}"), style)))
+                .style(highlight_if(focused, global_idx, scroll))
+        }
+    }
 }
 
 fn highlight_if(focused: bool, index: usize, scroll: usize) -> Style {
@@ -294,45 +299,55 @@ fn draw_log_list(f: &mut Frame, app: &App, area: Rect) {
     let filtered = app.filtered_logs();
     let visible_height = area.height.saturating_sub(2) as usize;
     let cursor = app.log_cursor.min(filtered.len().saturating_sub(1));
-
-    let start = if cursor >= visible_height {
-        cursor - visible_height + 1
-    } else {
-        0
-    };
+    let start = compute_scroll_offset(true, cursor, visible_height);
     let end = (start + visible_height).min(filtered.len());
 
     let items: Vec<ListItem> = filtered[start..end]
         .iter()
         .enumerate()
         .map(|(vi, log)| {
-            let global_idx = start + vi;
-            let ts = log.timestamp.format("%H:%M:%S%.3f");
-            let level_str = format!("{:5}", format!("{:?}", log.level).to_uppercase());
-            let lc = level_color(log.level);
-
-            let line = Line::from(vec![
-                Span::styled(format!("{ts} "), Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{level_str} "), Style::default().fg(lc)),
-                Span::raw(&log.message),
-            ]);
-
-            let is_selected = app.selected_log_idx == Some(global_idx);
-            let is_cursor = !app.sidebar_focused && global_idx == cursor;
-            let style = if is_selected {
-                Style::default().bg(Color::DarkGray).fg(Color::White)
-            } else if is_cursor {
-                Style::default().bg(Color::Indexed(236))
-            } else {
-                Style::default()
-            };
-
-            ListItem::new(line).style(style)
+            render_log_item(
+                log,
+                start + vi,
+                cursor,
+                app.sidebar_focused,
+                app.selected_log_idx,
+            )
         })
         .collect();
 
     let list = List::new(items).block(block);
     f.render_widget(list, area);
+}
+
+fn render_log_item(
+    log: &common::log::LogEntry,
+    global_idx: usize,
+    cursor: usize,
+    sidebar_focused: bool,
+    selected_log_idx: Option<usize>,
+) -> ListItem<'static> {
+    let ts = log.timestamp.format("%H:%M:%S%.3f");
+    let level_str = format!("{:5}", format!("{:?}", log.level).to_uppercase());
+    let lc = level_color(log.level);
+
+    let line = Line::from(vec![
+        Span::styled(format!("{ts} "), Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{level_str} "), Style::default().fg(lc)),
+        Span::raw(log.message.clone()),
+    ]);
+
+    let is_selected = selected_log_idx == Some(global_idx);
+    let is_cursor = !sidebar_focused && global_idx == cursor;
+    let style = if is_selected {
+        Style::default().bg(Color::DarkGray).fg(Color::White)
+    } else if is_cursor {
+        Style::default().bg(Color::Indexed(236))
+    } else {
+        Style::default()
+    };
+
+    ListItem::new(line).style(style)
 }
 
 fn level_color(level: LogLevel) -> Color {
@@ -363,7 +378,7 @@ fn draw_keyhints(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Black).bg(Color::DarkGray),
         )
     };
-    let desc = |d: &str| Span::styled(format!(" {d}"), Style::default().fg(Color::DarkGray));
+    let desc = |d: &str| Span::styled(format!(" {d}  "), Style::default().fg(Color::DarkGray));
 
     let hints: Vec<Span> = match app.input_mode {
         InputMode::Search => vec![key("Enter"), desc("apply"), key("Esc"), desc("cancel")],
@@ -397,36 +412,46 @@ fn draw_keyhints(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(line), area);
 }
 
-fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
-    let filtered = app.filtered_logs();
+struct LevelCounts {
+    error: usize,
+    warn: usize,
+    info: usize,
+    debug: usize,
+}
 
-    let mut error_count = 0usize;
-    let mut warn_count = 0usize;
-    let mut info_count = 0usize;
-    let mut debug_count = 0usize;
-
-    for log in &filtered {
+fn count_levels(logs: &[&common::log::LogEntry]) -> LevelCounts {
+    let mut counts = LevelCounts {
+        error: 0,
+        warn: 0,
+        info: 0,
+        debug: 0,
+    };
+    for log in logs {
         match log.level {
-            LogLevel::Error | LogLevel::Fatal => error_count += 1,
-            LogLevel::Warn => warn_count += 1,
-            LogLevel::Info => info_count += 1,
-            LogLevel::Debug | LogLevel::Trace => debug_count += 1,
+            LogLevel::Error | LogLevel::Fatal => counts.error += 1,
+            LogLevel::Warn => counts.warn += 1,
+            LogLevel::Info => counts.info += 1,
+            LogLevel::Debug | LogLevel::Trace => counts.debug += 1,
         }
     }
+    counts
+}
 
+fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
+    let filtered = app.filtered_logs();
+    let counts = count_levels(&filtered);
     let sort_order = if app.newest_first { "newest" } else { "oldest" };
 
     let status = match app.tab {
-        Tab::Logs => {
-            let total = filtered.len();
-            format!(
-                " {total} lines | {sort_order} first | error: {error_count} | warn: {warn_count} | info: {info_count} | debug: {debug_count} "
-            )
-        }
-        Tab::Traces => {
-            let traces = app.unique_traces();
-            format!(" {} traces ", traces.len())
-        }
+        Tab::Logs => format!(
+            " {} lines | {sort_order} first | error: {} | warn: {} | info: {} | debug: {} ",
+            filtered.len(),
+            counts.error,
+            counts.warn,
+            counts.info,
+            counts.debug,
+        ),
+        Tab::Traces => format!(" {} traces ", app.unique_traces().len()),
     };
 
     let error_text = app
@@ -448,17 +473,16 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(footer, area);
 }
 
-fn draw_disconnected(f: &mut Frame, app: &App) {
-    let area = f.area();
-    let width = 50u16.min(area.width.saturating_sub(4));
-    let height = 7u16.min(area.height.saturating_sub(2));
-    let x = area.x + (area.width.saturating_sub(width)) / 2;
-    let y = area.y + (area.height.saturating_sub(height)) / 2;
-    let popup = Rect::new(x, y, width, height);
+fn centered_popup(area: Rect, width: u16, height: u16) -> Rect {
+    let w = width.min(area.width.saturating_sub(4));
+    let h = height.min(area.height.saturating_sub(2));
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    Rect::new(x, y, w, h)
+}
 
-    let error_detail = app.error.as_deref().unwrap_or("connection refused");
-
-    let text = vec![
+fn disconnected_text(server_url: &str, error_detail: &str) -> Vec<Line<'static>> {
+    vec![
         Line::from(""),
         Line::from(Span::styled(
             "No connection to server",
@@ -466,14 +490,20 @@ fn draw_disconnected(f: &mut Frame, app: &App) {
         )),
         Line::from(""),
         Line::from(Span::styled(
-            app.server_url.as_str(),
+            server_url.to_string(),
             Style::default().fg(Color::Yellow),
         )),
         Line::from(Span::styled(
-            error_detail,
+            error_detail.to_string(),
             Style::default().fg(Color::DarkGray),
         )),
-    ];
+    ]
+}
+
+fn draw_disconnected(f: &mut Frame, app: &App) {
+    let popup = centered_popup(f.area(), 50, 7);
+    let error_detail = app.error.as_deref().unwrap_or("connection refused");
+    let text = disconnected_text(&app.server_url, error_detail);
 
     let block = Block::default()
         .title(" Disconnected ")

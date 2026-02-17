@@ -67,18 +67,12 @@ async fn run(
 
     let refresh_interval = Duration::from_secs(2);
     let mut last_refresh = std::time::Instant::now();
+    let poll_timeout = Duration::from_millis(50);
 
     loop {
         terminal.draw(|f| ui::draw(f, &app))?;
 
-        let timeout = if app.live_tail {
-            let elapsed = last_refresh.elapsed();
-            refresh_interval.saturating_sub(elapsed)
-        } else {
-            Duration::from_millis(250)
-        };
-
-        if event::poll(timeout)?
+        if event::poll(poll_timeout)?
             && let Event::Key(key) = event::read()?
         {
             if key.kind != KeyEventKind::Press {

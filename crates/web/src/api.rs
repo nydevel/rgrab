@@ -34,7 +34,13 @@ async fn get_logs(
     State(store): State<RocksStore>,
     Query(q): Query<LogsQuery>,
 ) -> Json<Vec<LogEntry>> {
-    let logs = store.query_logs(q.limit).await.unwrap_or_default();
+    let logs = match store.query_logs(q.limit).await {
+        Ok(logs) => logs,
+        Err(e) => {
+            tracing::error!("Failed to query logs: {e}");
+            Vec::new()
+        }
+    };
     Json(logs)
 }
 
@@ -43,8 +49,20 @@ async fn get_traces(
     Query(q): Query<TracesQuery>,
 ) -> Json<Vec<Span>> {
     let spans = match q.trace_id {
-        Some(id) => store.query_spans(id).await.unwrap_or_default(),
-        None => store.query_all_spans(q.limit).await.unwrap_or_default(),
+        Some(id) => match store.query_spans(id).await {
+            Ok(spans) => spans,
+            Err(e) => {
+                tracing::error!("Failed to query spans: {e}");
+                Vec::new()
+            }
+        },
+        None => match store.query_all_spans(q.limit).await {
+            Ok(spans) => spans,
+            Err(e) => {
+                tracing::error!("Failed to query all spans: {e}");
+                Vec::new()
+            }
+        },
     };
     Json(spans)
 }

@@ -89,8 +89,7 @@ impl App {
     }
 
     pub fn is_level_enabled(&self, level: LogLevel) -> bool {
-        let idx = level_index(level);
-        self.level_enabled[idx]
+        self.level_enabled[level_index(level)]
     }
 
     pub async fn refresh(&mut self, client: &ApiClient) {
@@ -149,30 +148,9 @@ impl App {
         let mut result: Vec<&LogEntry> = self
             .logs
             .iter()
-            .filter(|log| {
-                if !self.is_level_enabled(log.level) {
-                    return false;
-                }
-                if !self.search.is_empty() {
-                    let search_lower = self.search.to_lowercase();
-                    let in_msg = log.message.to_lowercase().contains(&search_lower);
-                    let in_labels = log.labels.iter().any(|(k, v)| {
-                        k.to_lowercase().contains(&search_lower)
-                            || v.to_lowercase().contains(&search_lower)
-                    });
-                    if !in_msg && !in_labels {
-                        return false;
-                    }
-                }
-                for (key, val) in &self.selected_labels {
-                    match log.labels.get(key) {
-                        Some(v) if v == val => {}
-                        _ => return false,
-                    }
-                }
-                true
-            })
+            .filter(|log| self.log_matches_filters(log))
             .collect();
+
         if self.newest_first {
             result.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         } else {
@@ -181,37 +159,35 @@ impl App {
         result
     }
 
+    fn log_matches_filters(&self, log: &LogEntry) -> bool {
+        if !self.is_level_enabled(log.level) {
+            return false;
+        }
+        if !self.search.is_empty() && !self.log_matches_search(log) {
+            return false;
+        }
+        self.selected_labels
+            .iter()
+            .all(|(key, val)| log.labels.get(key) == Some(val))
+    }
+
+    fn log_matches_search(&self, log: &LogEntry) -> bool {
+        let search_lower = self.search.to_lowercase();
+        let in_msg = log.message.to_lowercase().contains(&search_lower);
+        let in_labels = log.labels.iter().any(|(k, v)| {
+            k.to_lowercase().contains(&search_lower) || v.to_lowercase().contains(&search_lower)
+        });
+        in_msg || in_labels
+    }
+
     pub fn unique_traces(&self) -> Vec<TraceGroup> {
         let mut groups: HashMap<String, TraceGroup> = HashMap::new();
 
         for span in &self.traces {
             let group = groups
                 .entry(span.trace_id.clone())
-                .or_insert_with(|| TraceGroup {
-                    trace_id: span.trace_id.clone(),
-                    root_operation: String::new(),
-                    root_service: String::new(),
-                    start_time: span.start_time,
-                    total_duration_ms: 0.0,
-                    span_count: 0,
-                    has_error: false,
-                });
-            group.span_count += 1;
-            if span.parent_span_id.is_none() {
-                group.root_operation = span.operation_name.clone();
-                group.root_service = span.service_name.clone();
-                let dur = span
-                    .end_time
-                    .signed_duration_since(span.start_time)
-                    .num_microseconds()
-                    .unwrap_or(0) as f64
-                    / 1000.0;
-                group.total_duration_ms = dur;
-                group.start_time = span.start_time;
-            }
-            if span.status == common::span::SpanStatus::Error {
-                group.has_error = true;
-            }
+                .or_insert_with(|| TraceGroup::new(span));
+            update_trace_group(group, span);
         }
 
         let mut result: Vec<TraceGroup> = groups.into_values().collect();
@@ -220,8 +196,6 @@ impl App {
     }
 
     pub fn sidebar_items(&self) -> Vec<SidebarItem> {
-        let mut items = Vec::new();
-
         let services = self
             .label_values
             .get("service")
@@ -233,38 +207,13 @@ impl App {
             .cloned()
             .unwrap_or_default();
 
-        for svc in &services {
-            let svc_selected = self.selected_labels.get("service") == Some(svc);
-            items.push(SidebarItem::Label(svc.clone()));
-            items.push(SidebarItem::Value {
-                label: "service".to_string(),
-                value: svc.clone(),
-                selected: svc_selected,
-            });
-
-            for env in &environments {
-                let env_selected = self.selected_labels.get("environment") == Some(env);
-                items.push(SidebarItem::Value {
-                    label: "environment".to_string(),
-                    value: env.clone(),
-                    selected: env_selected,
-                });
-            }
+        if !services.is_empty() {
+            build_service_sidebar(&services, &environments, &self.selected_labels)
+        } else if !environments.is_empty() {
+            build_environment_sidebar(&environments, &self.selected_labels)
+        } else {
+            Vec::new()
         }
-
-        if services.is_empty() && !environments.is_empty() {
-            items.push(SidebarItem::Label("environment".to_string()));
-            for env in &environments {
-                let selected = self.selected_labels.get("environment") == Some(env);
-                items.push(SidebarItem::Value {
-                    label: "environment".to_string(),
-                    value: env.clone(),
-                    selected,
-                });
-            }
-        }
-
-        items
     }
 
     pub fn select_current_log(&mut self) {
@@ -297,6 +246,45 @@ impl App {
     }
 }
 
+fn build_service_sidebar(
+    services: &[String],
+    environments: &[String],
+    selected: &HashMap<String, String>,
+) -> Vec<SidebarItem> {
+    let mut items = Vec::new();
+    for svc in services {
+        items.push(SidebarItem::Label(svc.clone()));
+        items.push(SidebarItem::Value {
+            label: "service".to_string(),
+            value: svc.clone(),
+            selected: selected.get("service") == Some(svc),
+        });
+        for env in environments {
+            items.push(SidebarItem::Value {
+                label: "environment".to_string(),
+                value: env.clone(),
+                selected: selected.get("environment") == Some(env),
+            });
+        }
+    }
+    items
+}
+
+fn build_environment_sidebar(
+    environments: &[String],
+    selected: &HashMap<String, String>,
+) -> Vec<SidebarItem> {
+    let mut items = vec![SidebarItem::Label("environment".to_string())];
+    for env in environments {
+        items.push(SidebarItem::Value {
+            label: "environment".to_string(),
+            value: env.clone(),
+            selected: selected.get("environment") == Some(env),
+        });
+    }
+    items
+}
+
 pub struct TraceGroup {
     pub trace_id: String,
     pub root_operation: String,
@@ -305,6 +293,38 @@ pub struct TraceGroup {
     pub total_duration_ms: f64,
     pub span_count: usize,
     pub has_error: bool,
+}
+
+impl TraceGroup {
+    fn new(span: &Span) -> Self {
+        Self {
+            trace_id: span.trace_id.clone(),
+            root_operation: String::new(),
+            root_service: String::new(),
+            start_time: span.start_time,
+            total_duration_ms: 0.0,
+            span_count: 0,
+            has_error: false,
+        }
+    }
+}
+
+fn update_trace_group(group: &mut TraceGroup, span: &Span) {
+    group.span_count += 1;
+    if span.parent_span_id.is_none() {
+        group.root_operation = span.operation_name.clone();
+        group.root_service = span.service_name.clone();
+        group.total_duration_ms = span
+            .end_time
+            .signed_duration_since(span.start_time)
+            .num_microseconds()
+            .unwrap_or(0) as f64
+            / 1000.0;
+        group.start_time = span.start_time;
+    }
+    if span.status == common::span::SpanStatus::Error {
+        group.has_error = true;
+    }
 }
 
 pub enum SidebarItem {

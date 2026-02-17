@@ -11,6 +11,9 @@ use rocksdb::{ColumnFamilyDescriptor, DB, IteratorMode, Options};
 
 const CF_LOGS: &str = "logs";
 const CF_SPANS: &str = "spans";
+const LOG_KEY_LEN: usize = 16;
+const TIMESTAMP_BYTES: std::ops::Range<usize> = 0..8;
+const SEQUENCE_BYTES: std::ops::Range<usize> = 8..16;
 
 #[derive(Clone)]
 pub struct RocksStore {
@@ -166,68 +169,20 @@ impl RocksStore {
     ) -> Result<Vec<LogEntry>> {
         let cf = self.db.cf_handle(CF_LOGS).context("logs CF missing")?;
         let mut raw_iter = self.db.raw_iterator_cf(&cf);
-
-        match direction {
-            Direction::Backward => {
-                if let Some(end_ns) = end {
-                    let key = encode_log_key(end_ns, u64::MAX);
-                    raw_iter.seek_for_prev(key);
-                } else {
-                    raw_iter.seek_to_last();
-                }
-            }
-            Direction::Forward => {
-                if let Some(start_ns) = start {
-                    let key = encode_log_key(start_ns, 0);
-                    raw_iter.seek(key);
-                } else {
-                    raw_iter.seek_to_first();
-                }
-            }
-        }
+        seek_for_query(&mut raw_iter, direction, start, end);
 
         let mut results = Vec::with_capacity(limit);
         while raw_iter.valid() && results.len() < limit {
             let Some(key) = raw_iter.key() else { break };
-            let Some(value) = raw_iter.value() else {
-                break;
-            };
+            let Some(value) = raw_iter.value() else { break };
 
-            if key.len() == 16 {
-                let ts = i64::from_be_bytes(key[..8].try_into().unwrap());
-                if let Some(s) = start
-                    && ts < s
-                {
-                    match direction {
-                        Direction::Forward => {
-                            raw_iter.next();
-                            continue;
-                        }
-                        Direction::Backward => break,
-                    }
-                }
-                if let Some(e) = end
-                    && ts > e
-                {
-                    match direction {
-                        Direction::Backward => {
-                            raw_iter.prev();
-                            continue;
-                        }
-                        Direction::Forward => break,
-                    }
-                }
+            match process_log_entry(key, value, start, end, direction, matchers)? {
+                EntryAction::Include(entry) => results.push(entry),
+                EntryAction::Skip => {}
+                EntryAction::Stop => break,
             }
 
-            let entry: LogEntry = serde_json::from_slice(value)?;
-            if matchers.iter().all(|m| m.matches(&entry.labels)) {
-                results.push(entry);
-            }
-
-            match direction {
-                Direction::Forward => raw_iter.next(),
-                Direction::Backward => raw_iter.prev(),
-            }
+            advance_iter(&mut raw_iter, direction);
         }
         raw_iter.status()?;
         Ok(results)
@@ -266,24 +221,118 @@ impl RocksStore {
     }
 }
 
+enum EntryAction {
+    Include(LogEntry),
+    Skip,
+    Stop,
+}
+
+fn seek_for_query(
+    raw_iter: &mut rocksdb::DBRawIterator<'_>,
+    direction: Direction,
+    start: Option<i64>,
+    end: Option<i64>,
+) {
+    match direction {
+        Direction::Backward => {
+            if let Some(end_ns) = end {
+                raw_iter.seek_for_prev(encode_log_key(end_ns, u64::MAX));
+            } else {
+                raw_iter.seek_to_last();
+            }
+        }
+        Direction::Forward => {
+            if let Some(start_ns) = start {
+                raw_iter.seek(encode_log_key(start_ns, 0));
+            } else {
+                raw_iter.seek_to_first();
+            }
+        }
+    }
+}
+
+fn check_time_boundary(
+    ts: i64,
+    start: Option<i64>,
+    end: Option<i64>,
+    direction: Direction,
+) -> EntryAction {
+    if let Some(s) = start
+        && ts < s
+    {
+        return match direction {
+            Direction::Forward => EntryAction::Skip,
+            Direction::Backward => EntryAction::Stop,
+        };
+    }
+    if let Some(e) = end
+        && ts > e
+    {
+        return match direction {
+            Direction::Backward => EntryAction::Skip,
+            Direction::Forward => EntryAction::Stop,
+        };
+    }
+    EntryAction::Skip
+}
+
+fn process_log_entry(
+    key: &[u8],
+    value: &[u8],
+    start: Option<i64>,
+    end: Option<i64>,
+    direction: Direction,
+    matchers: &[LabelMatcher],
+) -> Result<EntryAction> {
+    if key.len() == LOG_KEY_LEN {
+        let ts = i64::from_be_bytes(
+            key[TIMESTAMP_BYTES]
+                .try_into()
+                .expect("timestamp bytes are 8 bytes"),
+        );
+        match check_time_boundary(ts, start, end, direction) {
+            EntryAction::Stop => return Ok(EntryAction::Stop),
+            EntryAction::Skip if start.is_some_and(|s| ts < s) => return Ok(EntryAction::Skip),
+            EntryAction::Skip if end.is_some_and(|e| ts > e) => return Ok(EntryAction::Skip),
+            _ => {}
+        }
+    }
+
+    let entry: LogEntry = serde_json::from_slice(value)?;
+    if matchers.iter().all(|m| m.matches(&entry.labels)) {
+        Ok(EntryAction::Include(entry))
+    } else {
+        Ok(EntryAction::Skip)
+    }
+}
+
+fn advance_iter(raw_iter: &mut rocksdb::DBRawIterator<'_>, direction: Direction) {
+    match direction {
+        Direction::Forward => raw_iter.next(),
+        Direction::Backward => raw_iter.prev(),
+    }
+}
+
 fn recover_sequence(db: &DB) -> Result<u64> {
     let cf = db.cf_handle(CF_LOGS).context("logs CF missing")?;
     let mut iter = db.raw_iterator_cf(&cf);
     iter.seek_to_last();
     if iter.valid()
         && let Some(key) = iter.key()
-        && key.len() == 16
+        && key.len() == LOG_KEY_LEN
     {
-        let seq_bytes: [u8; 8] = key[8..16].try_into().unwrap();
+        let seq_bytes: [u8; 8] = key[SEQUENCE_BYTES]
+            .try_into()
+            .expect("sequence bytes are 8 bytes");
         return Ok(u64::from_be_bytes(seq_bytes) + 1);
     }
     Ok(0)
 }
 
-fn encode_log_key(timestamp_nanos: i64, seq: u64) -> [u8; 16] {
-    let mut key = [0u8; 16];
-    key[..8].copy_from_slice(&timestamp_nanos.to_be_bytes());
-    key[8..].copy_from_slice(&seq.to_be_bytes());
+fn encode_log_key(timestamp_nanos: i64, seq: u64) -> [u8; LOG_KEY_LEN] {
+    let mut key = [0u8; LOG_KEY_LEN];
+    key[TIMESTAMP_BYTES].copy_from_slice(&timestamp_nanos.to_be_bytes());
+    key[SEQUENCE_BYTES].copy_from_slice(&seq.to_be_bytes());
     key
 }
 
@@ -305,22 +354,23 @@ fn for_each_log_in_range(
     let mut raw_iter = db.raw_iterator_cf(cf);
 
     if let Some(start_ns) = start {
-        let key = encode_log_key(start_ns, 0);
-        raw_iter.seek(key);
+        raw_iter.seek(encode_log_key(start_ns, 0));
     } else {
         raw_iter.seek_to_first();
     }
 
     while raw_iter.valid() {
         let Some(key) = raw_iter.key() else { break };
-        let Some(value) = raw_iter.value() else {
-            break;
-        };
+        let Some(value) = raw_iter.value() else { break };
 
-        if key.len() == 16
+        if key.len() == LOG_KEY_LEN
             && let Some(e) = end
         {
-            let ts = i64::from_be_bytes(key[..8].try_into().unwrap());
+            let ts = i64::from_be_bytes(
+                key[TIMESTAMP_BYTES]
+                    .try_into()
+                    .expect("timestamp bytes are 8 bytes"),
+            );
             if ts > e {
                 break;
             }
