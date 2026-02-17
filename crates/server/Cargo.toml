@@ -26,6 +26,19 @@ conf-files = ["/etc/rgrab/rgrab.toml"]
 systemd-units = { unit-name = "rgrab", unit-scripts = "../../packaging/systemd", enable = false }
 maintainer-scripts = "../../packaging/scripts"
 
+[package.metadata.generate-rpm]
+name = "rgrab"
+license = "MIT"
+summary = "Lightweight observability backend for logs and distributed traces"
+assets = [
+    { source = "target/release/server", dest = "/usr/bin/rgrab", mode = "755" },
+    { source = "target/release/rgrab-tui", dest = "/usr/bin/rgrab-tui", mode = "755" },
+    { source = "packaging/config/rgrab.toml", dest = "/etc/rgrab/rgrab.toml", mode = "644", config = true },
+    { source = "packaging/systemd/rgrab.service", dest = "/usr/lib/systemd/system/rgrab.service", mode = "644" },
+]
+post_install_script = "packaging/scripts/postinst"
+pre_uninstall_script = "packaging/scripts/prerm"
+
 [dependencies]
 common = { path = "../common" }
 storage = { path = "../storage" }

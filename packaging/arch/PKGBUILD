@@ -1,0 +1,16 @@
+pkgname=rgrab
+pkgver=${PKGVER:-0.1.0}
+pkgrel=1
+pkgdesc="Lightweight observability backend for logs and distributed traces"
+arch=('x86_64')
+url="https://github.com/nydevel/rgrab"
+license=('MIT')
+backup=('etc/rgrab/rgrab.toml')
+
+package() {
+    cd "$srcdir"
+    install -Dm755 server "$pkgdir/usr/bin/rgrab"
+    install -Dm755 rgrab-tui "$pkgdir/usr/bin/rgrab-tui"
+    install -Dm644 rgrab.toml "$pkgdir/etc/rgrab/rgrab.toml"
+    install -Dm644 rgrab.service "$pkgdir/usr/lib/systemd/system/rgrab.service"
+}

@@ -28,16 +28,30 @@ jobs:
                   sudo apt-get update
                   sudo apt-get install -y libclang-dev
 
-            - name: Install cargo-deb
+            - name: Install packaging tools
               uses: taiki-e/install-action@v2
               with:
-                  tool: cargo-deb
+                  tool: cargo-deb,cargo-generate-rpm
 
             - name: Build release binaries
               run: cargo build --release
 
             - name: Build deb package
               run: cargo deb -p server --no-build
+
+            - name: Build rpm package
+              run: cargo generate-rpm -p crates/server
+
+            - name: Build Arch package
+              run: |
+                  VERSION=${GITHUB_REF#refs/tags/v}
+                  mkdir -p arch-pkg/src
+                  cp target/release/server arch-pkg/src/
+                  cp target/release/rgrab-tui arch-pkg/src/
+                  cp packaging/config/rgrab.toml arch-pkg/src/
+                  cp packaging/systemd/rgrab.service arch-pkg/src/
+                  cd arch-pkg
+                  PKGVER=${VERSION} tar czf rgrab-${VERSION}-x86_64.pkg.tar.gz -C src .
 
             - name: Get version from tag
               id: version
@@ -50,5 +64,7 @@ jobs:
                   generate_release_notes: true
                   files: |
                       target/debian/*.deb
+                      target/generate-rpm/*.rpm
+                      arch-pkg/*.pkg.tar.gz
                       target/release/server
                       target/release/rgrab-tui
