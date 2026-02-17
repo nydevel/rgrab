@@ -4,6 +4,9 @@ Lightweight observability backend for logs and distributed traces.
 
 Accepts logs via HTTP push, collects from Docker containers, receives OpenTelemetry (OTLP) traces, and provides a Loki-compatible query API. Uses embedded RocksDB for storage. Comes with a built-in terminal UI.
 
+![photo_2026-02-16_23-33-01](https://github.com/user-attachments/assets/47c9a943-396b-4f49-9487-ae3ae4628d79)
+
+
 ## Features
 
 - **Log ingestion** -- HTTP push API, Loki-compatible push, Docker container log collection
