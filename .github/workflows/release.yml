@@ -10,26 +10,34 @@ permissions:
 
 jobs:
     build:
-        runs-on: self-hosted
-
-        container:
-            image: ghcr.io/${{ github.repository }}/builder:latest
-            volumes:
-                - /opt/rgrab-cache/cargo:/cache/cargo
-                - /opt/rgrab-cache/target:/cache/target
-
-        env:
-            CARGO_HOME: /cache/cargo
-            CARGO_TARGET_DIR: /cache/target
+        runs-on: ubuntu-latest
 
         steps:
             - uses: actions/checkout@v4
+
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+
+            - name: Cache Rust dependencies
+              uses: Swatinem/rust-cache@v2
+              with:
+                  cache-on-failure: true
+
+            - name: Install system dependencies
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y libclang-dev
+
+            - name: Install cargo-deb
+              uses: taiki-e/install-action@v2
+              with:
+                  tool: cargo-deb
 
             - name: Build release binaries
               run: cargo build --release
 
             - name: Build deb package
-              run: cargo deb -p server --no-build --target-dir /cache/target
+              run: cargo deb -p server --no-build
 
             - name: Get version from tag
               id: version
@@ -41,6 +49,6 @@ jobs:
                   name: rgrab ${{ steps.version.outputs.version }}
                   generate_release_notes: true
                   files: |
-                      /cache/target/debian/*.deb
-                      /cache/target/release/server
-                      /cache/target/release/rgrab-tui
+                      target/debian/*.deb
+                      target/release/server
+                      target/release/rgrab-tui
