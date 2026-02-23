@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -35,7 +37,6 @@ const HEADER_LOGS_TAB_WIDTH: u16 = 8;
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg = config::load(cli.server);
-    let client = ApiClient::new(&cfg.server);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -47,7 +48,7 @@ async fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run(&mut terminal, &client).await;
+    let result = run(&mut terminal, cfg.servers).await;
 
     disable_raw_mode()?;
     execute!(
@@ -62,10 +63,11 @@ async fn main() -> Result<()> {
 
 async fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    client: &ApiClient,
+    servers: Vec<config::ServerEntry>,
 ) -> Result<()> {
-    let mut app = App::new(&client.base_url());
-    app.refresh(client).await;
+    let mut app = App::new(servers);
+    let mut client = ApiClient::new(app.server_url());
+    app.refresh(&client).await;
 
     let refresh_interval = Duration::from_secs(2);
     let mut last_refresh = std::time::Instant::now();
@@ -74,13 +76,20 @@ async fn run(
     loop {
         terminal.draw(|f| ui::draw(f, &mut app))?;
 
+        if app.server_changed {
+            app.server_changed = false;
+            client = ApiClient::new(app.server_url());
+            app.refresh(&client).await;
+            last_refresh = std::time::Instant::now();
+        }
+
         if event::poll(poll_timeout)? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    handle_input(&mut app, key.code, client).await;
+                    handle_input(&mut app, key, &client).await;
                 }
                 Event::Mouse(mouse) => {
-                    handle_mouse(&mut app, mouse, client).await;
+                    handle_mouse(&mut app, mouse, &client).await;
                 }
                 _ => {}
             }
@@ -91,7 +100,7 @@ async fn run(
         }
 
         if app.live_tail && last_refresh.elapsed() >= refresh_interval {
-            app.refresh(client).await;
+            app.refresh(&client).await;
             last_refresh = std::time::Instant::now();
         }
     }
@@ -99,10 +108,17 @@ async fn run(
     Ok(())
 }
 
-async fn handle_input(app: &mut App, code: KeyCode, client: &ApiClient) {
+async fn handle_input(app: &mut App, key: KeyEvent, client: &ApiClient) {
+    if key.modifiers.contains(KeyModifiers::CONTROL)
+        && let KeyCode::Char(c @ '1'..='9') = key.code
+    {
+        let idx = (c as usize) - ('1' as usize);
+        app.select_server(idx);
+        return;
+    }
     match app.input_mode {
-        InputMode::Search => handle_search_input(app, code),
-        InputMode::Normal => handle_normal_input(app, code, client).await,
+        InputMode::Search => handle_search_input(app, key.code),
+        InputMode::Normal => handle_normal_input(app, key.code, client).await,
     }
 }
 
@@ -308,7 +324,9 @@ fn scroll_trace_list(app: &mut App, count: usize, up: bool) {
 }
 
 async fn handle_mouse_click(app: &mut App, col: u16, row: u16, client: &ApiClient) {
-    if area_contains(app.areas.header, col, row) {
+    if area_contains(app.areas.server_panel, col, row) {
+        handle_server_panel_click(app, row);
+    } else if area_contains(app.areas.header, col, row) {
         handle_header_click(app, col);
     } else if area_contains(app.areas.level_tabs, col, row) {
         handle_level_click(app, col);
@@ -318,6 +336,17 @@ async fn handle_mouse_click(app: &mut App, col: u16, row: u16, client: &ApiClien
         handle_log_click(app, row);
     } else if area_contains(app.areas.traces, col, row) && app.tab == Tab::Traces {
         handle_trace_click(app, row, client).await;
+    }
+}
+
+fn handle_server_panel_click(app: &mut App, row: u16) {
+    let area = app.areas.server_panel;
+    if row < area.y || row >= area.y + area.height {
+        return;
+    }
+    let idx = (row - area.y) as usize;
+    if idx < app.servers.len() {
+        app.select_server(idx);
     }
 }
 

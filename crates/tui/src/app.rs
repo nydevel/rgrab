@@ -5,9 +5,11 @@ use common::span::Span;
 use ratatui::layout::Rect;
 
 use crate::client::ApiClient;
+use crate::config::ServerEntry;
 
 #[derive(Default)]
 pub struct LayoutAreas {
+    pub server_panel: Rect,
     pub header: Rect,
     pub level_tabs: Rect,
     pub sidebar: Rect,
@@ -37,6 +39,9 @@ pub const ALL_LEVELS: [LogLevel; 6] = [
 ];
 
 pub struct App {
+    pub servers: Vec<ServerEntry>,
+    pub active_server: usize,
+    pub server_changed: bool,
     pub tab: Tab,
     pub logs: Vec<LogEntry>,
     pub traces: Vec<Span>,
@@ -56,7 +61,6 @@ pub struct App {
     pub should_quit: bool,
     pub error: Option<String>,
     pub connected: bool,
-    pub server_url: String,
     pub level_enabled: [bool; 6],
     pub selected_log_idx: Option<usize>,
     pub newest_first: bool,
@@ -64,8 +68,11 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(server_url: &str) -> Self {
+    pub fn new(servers: Vec<ServerEntry>) -> Self {
         Self {
+            servers,
+            active_server: 0,
+            server_changed: false,
             tab: Tab::Logs,
             logs: Vec::new(),
             traces: Vec::new(),
@@ -85,12 +92,44 @@ impl App {
             should_quit: false,
             error: None,
             connected: false,
-            server_url: server_url.to_string(),
             level_enabled: [true; 6],
             selected_log_idx: None,
             newest_first: true,
             areas: LayoutAreas::default(),
         }
+    }
+
+    pub fn server_url(&self) -> &str {
+        &self.servers[self.active_server].url
+    }
+
+    pub fn server_name(&self) -> &str {
+        &self.servers[self.active_server].name
+    }
+
+    pub fn select_server(&mut self, idx: usize) {
+        if idx < self.servers.len() && idx != self.active_server {
+            self.active_server = idx;
+            self.server_changed = true;
+            self.reset_state();
+        }
+    }
+
+    fn reset_state(&mut self) {
+        self.logs.clear();
+        self.traces.clear();
+        self.trace_spans.clear();
+        self.labels.clear();
+        self.label_values.clear();
+        self.selected_labels.clear();
+        self.search.clear();
+        self.log_cursor = 0;
+        self.trace_scroll = 0;
+        self.sidebar_scroll = 0;
+        self.expanded_trace = None;
+        self.selected_log_idx = None;
+        self.error = None;
+        self.connected = false;
     }
 
     pub fn toggle_level(&mut self, idx: usize) {

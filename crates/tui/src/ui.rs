@@ -8,7 +8,18 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs};
 
 use crate::app::{self, App, InputMode, SidebarItem, Tab};
 
+const SERVER_PANEL_WIDTH: u16 = 6;
+
 pub fn draw(f: &mut Frame, app: &mut App) {
+    let top_split = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(SERVER_PANEL_WIDTH), Constraint::Min(40)])
+        .split(f.area());
+
+    app.areas.server_panel = top_split[0];
+    draw_server_panel(f, app, top_split[0]);
+
+    let main_area = top_split[1];
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -16,7 +27,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             Constraint::Min(5),
             Constraint::Length(3),
         ])
-        .split(f.area());
+        .split(main_area);
 
     app.areas.header = chunks[0];
 
@@ -37,6 +48,35 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
 }
 
+fn draw_server_panel(f: &mut Frame, app: &App, area: Rect) {
+    let items: Vec<ListItem> = app
+        .servers
+        .iter()
+        .enumerate()
+        .map(|(i, _)| render_server_item(i, i == app.active_server))
+        .collect();
+
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::RIGHT)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
+    f.render_widget(list, area);
+}
+
+fn render_server_item(index: usize, active: bool) -> ListItem<'static> {
+    let icon = format!(" \u{1F5B3} {} ", index + 1);
+    let style = if active {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    ListItem::new(Line::from(Span::styled(icon, style)))
+}
+
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let titles = vec![
         Line::from(if app.tab == Tab::Logs {
@@ -53,9 +93,10 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 
     let live = if app.live_tail { " Live" } else { "" };
     let limit_str = format!(" {} lines", app.limit);
+    let server_name = app.server_name();
 
     let header_block = Block::default()
-        .title(format!(" rgrab{live}{limit_str} "))
+        .title(format!(" rgrab [{server_name}]{live}{limit_str} "))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
@@ -425,6 +466,8 @@ fn build_keyhints(mode: InputMode) -> Vec<Span<'static>> {
             hint_desc("select"),
             hint_key("s"),
             hint_desc("sort"),
+            hint_key("C-N"),
+            hint_desc("server"),
             hint_key("L"),
             hint_desc("live"),
             hint_key("r"),
@@ -530,7 +573,7 @@ fn disconnected_text(server_url: &str, error_detail: &str) -> Vec<Line<'static>>
 fn draw_disconnected(f: &mut Frame, app: &App) {
     let popup = centered_popup(f.area(), 50, 7);
     let error_detail = app.error.as_deref().unwrap_or("connection refused");
-    let text = disconnected_text(&app.server_url, error_detail);
+    let text = disconnected_text(app.server_url(), error_detail);
 
     let block = Block::default()
         .title(" Disconnected ")
