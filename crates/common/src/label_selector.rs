@@ -18,26 +18,38 @@ pub fn parse_label_selector(input: &str) -> Result<Vec<LabelMatcher>, String> {
         if chars.peek().is_none() {
             break;
         }
-
-        let name = read_label_name(&mut chars)?;
-        skip_whitespace(&mut chars);
-        let op = read_op(&mut chars)?;
-        skip_whitespace(&mut chars);
-        let value = read_quoted_value(&mut chars)?;
-
-        matchers.push(LabelMatcher { name, op, value });
-
-        skip_whitespace(&mut chars);
-        match chars.peek() {
-            Some(',') => {
-                chars.next();
-            }
-            Some(c) => return Err(format!("unexpected character: '{c}'")),
-            None => break,
+        matchers.push(parse_single_matcher(&mut chars)?);
+        if !consume_comma_or_end(&mut chars)? {
+            break;
         }
     }
 
     Ok(matchers)
+}
+
+fn parse_single_matcher(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+) -> Result<LabelMatcher, String> {
+    let name = read_label_name(chars)?;
+    skip_whitespace(chars);
+    let op = read_op(chars)?;
+    skip_whitespace(chars);
+    let value = read_quoted_value(chars)?;
+    Ok(LabelMatcher { name, op, value })
+}
+
+fn consume_comma_or_end(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+) -> Result<bool, String> {
+    skip_whitespace(chars);
+    match chars.peek() {
+        Some(',') => {
+            chars.next();
+            Ok(true)
+        }
+        Some(c) => Err(format!("unexpected character: '{c}'")),
+        None => Ok(false),
+    }
 }
 
 fn skip_whitespace(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {

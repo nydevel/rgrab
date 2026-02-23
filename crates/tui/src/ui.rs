@@ -100,28 +100,8 @@ fn draw_logs_body(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_search_bar(f: &mut Frame, app: &App, area: Rect) {
     let is_active = app.input_mode == InputMode::Search;
-
-    let border_style = if is_active {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-
-    let text_style = if is_active {
-        Style::default().fg(Color::Yellow)
-    } else if app.search.is_empty() {
-        Style::default().fg(Color::DarkGray)
-    } else {
-        Style::default().fg(Color::White)
-    };
-
-    let text = if is_active {
-        format!("{}_", app.search)
-    } else if app.search.is_empty() {
-        "search...".to_string()
-    } else {
-        app.search.clone()
-    };
+    let border_style = search_border_style(is_active);
+    let (text, text_style) = search_text(app, is_active);
 
     let block = Block::default()
         .title(" / ")
@@ -134,6 +114,30 @@ fn draw_search_bar(f: &mut Frame, app: &App, area: Rect) {
     if is_active {
         let cursor_x = area.x + 1 + app.search.len() as u16;
         f.set_cursor_position((cursor_x, area.y + 1));
+    }
+}
+
+fn search_border_style(active: bool) -> Style {
+    if active {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    }
+}
+
+fn search_text(app: &App, active: bool) -> (String, Style) {
+    if active {
+        (
+            format!("{}_", app.search),
+            Style::default().fg(Color::Yellow),
+        )
+    } else if app.search.is_empty() {
+        (
+            "search...".to_string(),
+            Style::default().fg(Color::DarkGray),
+        )
+    } else {
+        (app.search.clone(), Style::default().fg(Color::White))
     }
 }
 
@@ -381,44 +385,54 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_keyhints(f: &mut Frame, app: &App, area: Rect) {
-    let key = |k: &str| {
-        Span::styled(
-            format!(" {k} "),
-            Style::default().fg(Color::Black).bg(Color::DarkGray),
-        )
-    };
-    let desc = |d: &str| Span::styled(format!(" {d}  "), Style::default().fg(Color::DarkGray));
+    let hints = build_keyhints(app.input_mode);
+    f.render_widget(Paragraph::new(Line::from(hints)), area);
+}
 
-    let hints: Vec<Span> = match app.input_mode {
-        InputMode::Search => vec![key("Enter"), desc("apply"), key("Esc"), desc("cancel")],
-        InputMode::Normal => vec![
-            key("Tab"),
-            desc("tab"),
-            key("^/v"),
-            desc("scroll"),
-            key("PgUp/Dn"),
-            desc("page"),
-            key("</>"),
-            desc("sidebar"),
-            key("/"),
-            desc("search"),
-            key("1-6"),
-            desc("filter"),
-            key("Enter"),
-            desc("select"),
-            key("s"),
-            desc("sort"),
-            key("L"),
-            desc("live"),
-            key("r"),
-            desc("refresh"),
-            key("q"),
-            desc("quit"),
+fn hint_key(k: &str) -> Span<'static> {
+    Span::styled(
+        format!(" {k} "),
+        Style::default().fg(Color::Black).bg(Color::DarkGray),
+    )
+}
+
+fn hint_desc(d: &str) -> Span<'static> {
+    Span::styled(format!(" {d}  "), Style::default().fg(Color::DarkGray))
+}
+
+fn build_keyhints(mode: InputMode) -> Vec<Span<'static>> {
+    match mode {
+        InputMode::Search => vec![
+            hint_key("Enter"),
+            hint_desc("apply"),
+            hint_key("Esc"),
+            hint_desc("cancel"),
         ],
-    };
-
-    let line = Line::from(hints);
-    f.render_widget(Paragraph::new(line), area);
+        InputMode::Normal => vec![
+            hint_key("Tab"),
+            hint_desc("tab"),
+            hint_key("^/v"),
+            hint_desc("scroll"),
+            hint_key("PgUp/Dn"),
+            hint_desc("page"),
+            hint_key("</>"),
+            hint_desc("sidebar"),
+            hint_key("/"),
+            hint_desc("search"),
+            hint_key("1-6"),
+            hint_desc("filter"),
+            hint_key("Enter"),
+            hint_desc("select"),
+            hint_key("s"),
+            hint_desc("sort"),
+            hint_key("L"),
+            hint_desc("live"),
+            hint_key("r"),
+            hint_desc("refresh"),
+            hint_key("q"),
+            hint_desc("quit"),
+        ],
+    }
 }
 
 struct LevelCounts {
@@ -447,22 +461,7 @@ fn count_levels(logs: &[&common::log::LogEntry]) -> LevelCounts {
 }
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
-    let filtered = app.filtered_logs();
-    let counts = count_levels(&filtered);
-    let sort_order = if app.newest_first { "newest" } else { "oldest" };
-
-    let status = match app.tab {
-        Tab::Logs => format!(
-            " {} lines | {sort_order} first | error: {} | warn: {} | info: {} | debug: {} ",
-            filtered.len(),
-            counts.error,
-            counts.warn,
-            counts.info,
-            counts.debug,
-        ),
-        Tab::Traces => format!(" {} traces ", app.unique_traces().len()),
-    };
-
+    let status = format_status_text(app);
     let error_text = app
         .error
         .as_ref()
@@ -480,6 +479,25 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     );
 
     f.render_widget(footer, area);
+}
+
+fn format_status_text(app: &App) -> String {
+    match app.tab {
+        Tab::Logs => {
+            let filtered = app.filtered_logs();
+            let counts = count_levels(&filtered);
+            let sort_order = if app.newest_first { "newest" } else { "oldest" };
+            format!(
+                " {} lines | {sort_order} first | error: {} | warn: {} | info: {} | debug: {} ",
+                filtered.len(),
+                counts.error,
+                counts.warn,
+                counts.info,
+                counts.debug,
+            )
+        }
+        Tab::Traces => format!(" {} traces ", app.unique_traces().len()),
+    }
 }
 
 fn centered_popup(area: Rect, width: u16, height: u16) -> Rect {

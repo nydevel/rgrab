@@ -40,60 +40,60 @@ pub fn draw_traces(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_trace_group_item(group: &crate::app::TraceGroup, is_selected: bool) -> ListItem<'static> {
-    let status_icon = if group.has_error {
-        Span::styled("x ", Style::default().fg(Color::Red))
-    } else {
-        Span::styled("o ", Style::default().fg(Color::Green))
-    };
-
-    let op = Span::styled(
-        format!(
-            "{:<TRACE_OPERATION_WIDTH$}",
-            truncate(&group.root_operation, TRACE_OPERATION_WIDTH)
-        ),
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD),
-    );
-
-    let svc = Span::styled(
-        format!(
-            "{:<TRACE_SERVICE_WIDTH$}",
-            truncate(&group.root_service, TRACE_SERVICE_WIDTH)
-        ),
-        Style::default().fg(Color::Cyan),
-    );
-
-    let dur = Span::styled(
-        format!("{:>8.1}ms ", group.total_duration_ms),
-        duration_color(group.total_duration_ms),
-    );
-
-    let tid = Span::styled(
-        format!(
-            "{}.. ",
-            &group.trace_id[..TRACE_ID_PREVIEW_LEN.min(group.trace_id.len())]
-        ),
-        Style::default().fg(Color::DarkGray),
-    );
-
-    let ts = Span::styled(
-        group.start_time.format("%H:%M:%S").to_string(),
-        Style::default().fg(Color::DarkGray),
-    );
-
-    let span_count = Span::styled(
-        format!(" ({} spans)", group.span_count),
-        Style::default().fg(Color::DarkGray),
-    );
-
-    let line = Line::from(vec![status_icon, op, svc, dur, tid, ts, span_count]);
+    let line = Line::from(trace_group_spans(group));
     let style = if is_selected {
         Style::default().bg(Color::DarkGray)
     } else {
         Style::default()
     };
     ListItem::new(line).style(style)
+}
+
+fn trace_group_spans(group: &crate::app::TraceGroup) -> Vec<Span<'static>> {
+    let status_icon = if group.has_error {
+        Span::styled("x ", Style::default().fg(Color::Red))
+    } else {
+        Span::styled("o ", Style::default().fg(Color::Green))
+    };
+
+    vec![
+        status_icon,
+        Span::styled(
+            format!(
+                "{:<TRACE_OPERATION_WIDTH$}",
+                truncate(&group.root_operation, TRACE_OPERATION_WIDTH)
+            ),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(
+                "{:<TRACE_SERVICE_WIDTH$}",
+                truncate(&group.root_service, TRACE_SERVICE_WIDTH)
+            ),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::styled(
+            format!("{:>8.1}ms ", group.total_duration_ms),
+            duration_color(group.total_duration_ms),
+        ),
+        Span::styled(
+            format!(
+                "{}.. ",
+                &group.trace_id[..TRACE_ID_PREVIEW_LEN.min(group.trace_id.len())]
+            ),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            group.start_time.format("%H:%M:%S").to_string(),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            format!(" ({} spans)", group.span_count),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]
 }
 
 fn render_expanded_spans(

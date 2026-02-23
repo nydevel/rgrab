@@ -60,39 +60,36 @@ pub struct Config {
 impl Config {
     pub fn load() -> Self {
         let cli = Cli::parse();
-
         let file_cfg = load_file_config(&cli.config);
+        merge_config(cli, file_cfg)
+    }
+}
 
-        let data_dir = cli
+fn merge_config(cli: Cli, file_cfg: FileConfig) -> Config {
+    Config {
+        data_dir: cli
             .data_dir
             .or(file_cfg.data_dir)
-            .unwrap_or_else(|| DEFAULT_DATA_DIR.to_string());
-
-        let listen = cli
+            .unwrap_or_else(|| DEFAULT_DATA_DIR.to_string()),
+        listen: cli
             .listen
             .or(file_cfg.listen)
-            .unwrap_or_else(|| DEFAULT_LISTEN.to_string());
-
-        let log_level = cli
+            .unwrap_or_else(|| DEFAULT_LISTEN.to_string()),
+        log_level: cli
             .log_level
             .or(file_cfg.log_level)
-            .unwrap_or_else(|| DEFAULT_LOG_LEVEL.to_string());
+            .unwrap_or_else(|| DEFAULT_LOG_LEVEL.to_string()),
+        docker: build_docker_config(file_cfg.docker.unwrap_or_default()),
+    }
+}
 
-        let docker_file = file_cfg.docker.unwrap_or_default();
-        let docker = DockerConfig {
-            enabled: docker_file.enabled.unwrap_or(false),
-            socket: docker_file
-                .socket
-                .unwrap_or_else(|| DEFAULT_DOCKER_SOCKET.to_string()),
-            containers: docker_file.containers.unwrap_or_default(),
-        };
-
-        Self {
-            data_dir,
-            listen,
-            log_level,
-            docker,
-        }
+fn build_docker_config(file_docker: FileDockerConfig) -> DockerConfig {
+    DockerConfig {
+        enabled: file_docker.enabled.unwrap_or(false),
+        socket: file_docker
+            .socket
+            .unwrap_or_else(|| DEFAULT_DOCKER_SOCKET.to_string()),
+        containers: file_docker.containers.unwrap_or_default(),
     }
 }
 

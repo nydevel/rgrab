@@ -121,6 +121,14 @@ impl<'de> Deserialize<'de> for StringOrInt {
     }
 }
 
+// === Span Kind Constants ===
+
+const SPAN_KIND_INTERNAL: u32 = 1;
+const SPAN_KIND_SERVER: u32 = 2;
+const SPAN_KIND_CLIENT: u32 = 3;
+const SPAN_KIND_PRODUCER: u32 = 4;
+const SPAN_KIND_CONSUMER: u32 = 5;
+
 // === Conversion to internal Span model ===
 
 fn any_value_to_string(v: &AnyValue) -> String {
@@ -186,32 +194,8 @@ pub fn convert_otlp_span(
     service_name: &str,
     resource_attrs: &HashMap<String, String>,
 ) -> Span {
-    let mut attributes = kv_to_hashmap(&otlp_span.attributes);
-
-    // Merge resource attributes (span attributes take precedence)
-    for (k, v) in resource_attrs {
-        attributes.entry(k.clone()).or_insert_with(|| v.clone());
-    }
-
-    if otlp_span.kind > 0 {
-        let kind_str = match otlp_span.kind {
-            1 => "internal",
-            2 => "server",
-            3 => "client",
-            4 => "producer",
-            5 => "consumer",
-            _ => "unspecified",
-        };
-        attributes
-            .entry("span.kind".to_string())
-            .or_insert_with(|| kind_str.to_string());
-    }
-
-    let parent = if otlp_span.parent_span_id.is_empty() {
-        None
-    } else {
-        Some(otlp_span.parent_span_id.clone())
-    };
+    let attributes = build_span_attributes(otlp_span, resource_attrs);
+    let parent = optional_parent(&otlp_span.parent_span_id);
 
     Span {
         trace_id: otlp_span.trace_id.clone(),
@@ -227,29 +211,65 @@ pub fn convert_otlp_span(
     }
 }
 
-pub fn extract_spans(req: &ExportTraceServiceRequest) -> Vec<Span> {
-    let mut spans = Vec::new();
-
-    for rs in &req.resource_spans {
-        let resource_attrs: HashMap<String, String> = rs
-            .resource
-            .as_ref()
-            .map(|r| kv_to_hashmap(&r.attributes))
-            .unwrap_or_default();
-
-        let service_name = rs
-            .resource
-            .as_ref()
-            .and_then(|r| find_attribute(&r.attributes, "service.name"))
-            .map(any_value_to_string)
-            .unwrap_or_default();
-
-        for ss in &rs.scope_spans {
-            for otlp_span in &ss.spans {
-                spans.push(convert_otlp_span(otlp_span, &service_name, &resource_attrs));
-            }
-        }
+fn build_span_attributes(
+    otlp_span: &OtlpSpan,
+    resource_attrs: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut attributes = kv_to_hashmap(&otlp_span.attributes);
+    for (k, v) in resource_attrs {
+        attributes.entry(k.clone()).or_insert_with(|| v.clone());
     }
+    if otlp_span.kind > 0 {
+        attributes
+            .entry("span.kind".to_string())
+            .or_insert_with(|| span_kind_str(otlp_span.kind).to_string());
+    }
+    attributes
+}
 
-    spans
+fn span_kind_str(kind: u32) -> &'static str {
+    match kind {
+        SPAN_KIND_INTERNAL => "internal",
+        SPAN_KIND_SERVER => "server",
+        SPAN_KIND_CLIENT => "client",
+        SPAN_KIND_PRODUCER => "producer",
+        SPAN_KIND_CONSUMER => "consumer",
+        _ => "unspecified",
+    }
+}
+
+fn optional_parent(parent_span_id: &str) -> Option<String> {
+    if parent_span_id.is_empty() {
+        None
+    } else {
+        Some(parent_span_id.to_string())
+    }
+}
+
+pub fn extract_spans(req: &ExportTraceServiceRequest) -> Vec<Span> {
+    req.resource_spans
+        .iter()
+        .flat_map(extract_resource_spans)
+        .collect()
+}
+
+fn extract_resource_spans(rs: &ResourceSpans) -> Vec<Span> {
+    let resource_attrs = rs
+        .resource
+        .as_ref()
+        .map(|r| kv_to_hashmap(&r.attributes))
+        .unwrap_or_default();
+
+    let service_name = rs
+        .resource
+        .as_ref()
+        .and_then(|r| find_attribute(&r.attributes, "service.name"))
+        .map(any_value_to_string)
+        .unwrap_or_default();
+
+    rs.scope_spans
+        .iter()
+        .flat_map(|ss| &ss.spans)
+        .map(|s| convert_otlp_span(s, &service_name, &resource_attrs))
+        .collect()
 }

@@ -18,6 +18,9 @@ use ratatui::backend::CrosstermBackend;
 use app::{App, InputMode, SidebarItem, Tab};
 use client::ApiClient;
 
+const SCROLL_LINES: usize = 3;
+const HEADER_LOGS_TAB_WIDTH: u16 = 8;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let server = parse_server_arg();
@@ -134,78 +137,66 @@ fn handle_search_input(app: &mut App, code: KeyCode) {
 async fn handle_normal_input(app: &mut App, code: KeyCode, client: &ApiClient) {
     match code {
         KeyCode::Char('q') => app.should_quit = true,
-
-        KeyCode::Tab => {
-            app.tab = match app.tab {
-                Tab::Logs => Tab::Traces,
-                Tab::Traces => Tab::Logs,
-            };
-        }
-
-        KeyCode::Char('/') => {
-            app.input_mode = InputMode::Search;
-            app.search.clear();
-        }
-
+        KeyCode::Tab => app.tab = toggle_tab(app.tab),
+        KeyCode::Char('/') => start_search(app),
         KeyCode::Char('j') | KeyCode::Down => scroll_down(app, 1),
         KeyCode::Char('k') | KeyCode::Up => scroll_up(app, 1),
         KeyCode::PageDown => scroll_down(app, page_size(app)),
         KeyCode::PageUp => scroll_up(app, page_size(app)),
         KeyCode::Home => scroll_to_top(app),
         KeyCode::End => scroll_to_end(app),
-
-        KeyCode::Char('h') | KeyCode::Left => {
-            app.sidebar_focused = true;
-        }
-        KeyCode::Char('l') | KeyCode::Right => {
-            app.sidebar_focused = false;
-        }
-
-        KeyCode::Char('1') => app.toggle_level(0), // TRACE
-        KeyCode::Char('2') => app.toggle_level(1), // DEBUG
-        KeyCode::Char('3') => app.toggle_level(2), // INFO
-        KeyCode::Char('4') => app.toggle_level(3), // WARN
-        KeyCode::Char('5') => app.toggle_level(4), // ERROR
-        KeyCode::Char('6') => app.toggle_level(5), // FATAL
-
+        KeyCode::Char('h') | KeyCode::Left => app.sidebar_focused = true,
+        KeyCode::Char('l') | KeyCode::Right => app.sidebar_focused = false,
+        KeyCode::Char(c @ '1'..='6') => app.toggle_level((c as usize) - ('1' as usize)),
         KeyCode::Enter => handle_enter(app, client).await,
-
-        KeyCode::Esc => {
-            if app.selected_log_idx.is_some() {
-                app.selected_log_idx = None;
-            } else if app.expanded_trace.is_some() {
-                app.expanded_trace = None;
-            } else if !app.search.is_empty() {
-                app.search.clear();
-                app.log_cursor = 0;
-            }
-        }
-
-        KeyCode::Char('L') => {
-            app.live_tail = !app.live_tail;
-        }
-
-        KeyCode::Char('r') => {
-            app.refresh(client).await;
-        }
-
-        KeyCode::Char('+') | KeyCode::Char('=') => {
-            app.limit = (app.limit + 100).min(10000);
-            app.refresh(client).await;
-        }
-
-        KeyCode::Char('-') => {
-            app.limit = app.limit.saturating_sub(100).max(50);
-            app.refresh(client).await;
-        }
-
-        KeyCode::Char('s') => {
-            app.newest_first = !app.newest_first;
-            app.log_cursor = 0;
-        }
-
+        KeyCode::Esc => handle_esc(app),
+        KeyCode::Char('L') => app.live_tail = !app.live_tail,
+        KeyCode::Char('r') => app.refresh(client).await,
+        KeyCode::Char('+') | KeyCode::Char('=') => adjust_limit(app, client, 100).await,
+        KeyCode::Char('-') => adjust_limit(app, client, -100).await,
+        KeyCode::Char('s') => toggle_sort(app),
         _ => {}
     }
+}
+
+fn toggle_tab(tab: Tab) -> Tab {
+    match tab {
+        Tab::Logs => Tab::Traces,
+        Tab::Traces => Tab::Logs,
+    }
+}
+
+fn start_search(app: &mut App) {
+    app.input_mode = InputMode::Search;
+    app.search.clear();
+}
+
+fn handle_esc(app: &mut App) {
+    if app.selected_log_idx.is_some() {
+        app.selected_log_idx = None;
+    } else if app.expanded_trace.is_some() {
+        app.expanded_trace = None;
+    } else if !app.search.is_empty() {
+        app.search.clear();
+        app.log_cursor = 0;
+    }
+}
+
+async fn adjust_limit(app: &mut App, client: &ApiClient, delta: i64) {
+    if delta > 0 {
+        app.limit = (app.limit + delta as usize).min(10000);
+    } else {
+        app.limit = app
+            .limit
+            .saturating_sub(delta.unsigned_abs() as usize)
+            .max(50);
+    }
+    app.refresh(client).await;
+}
+
+fn toggle_sort(app: &mut App) {
+    app.newest_first = !app.newest_first;
+    app.log_cursor = 0;
 }
 
 fn scroll_down(app: &mut App, count: usize) {
@@ -288,84 +279,101 @@ async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent, client
 }
 
 fn handle_mouse_scroll(app: &mut App, col: u16, row: u16, up: bool) {
+    let count = SCROLL_LINES;
     if area_contains(app.areas.sidebar, col, row) {
-        if up {
-            app.sidebar_scroll = app.sidebar_scroll.saturating_sub(3);
-        } else {
-            let max = app.sidebar_items().len().saturating_sub(1);
-            app.sidebar_scroll = (app.sidebar_scroll + 3).min(max);
-        }
+        scroll_sidebar(app, count, up);
     } else if area_contains(app.areas.log_list, col, row) && app.tab == Tab::Logs {
-        if up {
-            app.log_cursor = app.log_cursor.saturating_sub(3);
-        } else {
-            let max = app.filtered_logs().len().saturating_sub(1);
-            app.log_cursor = (app.log_cursor + 3).min(max);
-        }
+        scroll_log_list(app, count, up);
     } else if area_contains(app.areas.traces, col, row) && app.tab == Tab::Traces {
-        if up {
-            app.trace_scroll = app.trace_scroll.saturating_sub(3);
-        } else {
-            let max = app.unique_traces().len().saturating_sub(1);
-            app.trace_scroll = (app.trace_scroll + 3).min(max);
-        }
+        scroll_trace_list(app, count, up);
+    }
+}
+
+fn scroll_sidebar(app: &mut App, count: usize, up: bool) {
+    if up {
+        app.sidebar_scroll = app.sidebar_scroll.saturating_sub(count);
+    } else {
+        let max = app.sidebar_items().len().saturating_sub(1);
+        app.sidebar_scroll = (app.sidebar_scroll + count).min(max);
+    }
+}
+
+fn scroll_log_list(app: &mut App, count: usize, up: bool) {
+    if up {
+        app.log_cursor = app.log_cursor.saturating_sub(count);
+    } else {
+        let max = app.filtered_logs().len().saturating_sub(1);
+        app.log_cursor = (app.log_cursor + count).min(max);
+    }
+}
+
+fn scroll_trace_list(app: &mut App, count: usize, up: bool) {
+    if up {
+        app.trace_scroll = app.trace_scroll.saturating_sub(count);
+    } else {
+        let max = app.unique_traces().len().saturating_sub(1);
+        app.trace_scroll = (app.trace_scroll + count).min(max);
     }
 }
 
 async fn handle_mouse_click(app: &mut App, col: u16, row: u16, client: &ApiClient) {
     if area_contains(app.areas.header, col, row) {
         handle_header_click(app, col);
-        return;
-    }
-
-    if area_contains(app.areas.level_tabs, col, row) {
+    } else if area_contains(app.areas.level_tabs, col, row) {
         handle_level_click(app, col);
-        return;
+    } else if area_contains(app.areas.sidebar, col, row) {
+        handle_sidebar_click(app, row);
+    } else if area_contains(app.areas.log_list, col, row) && app.tab == Tab::Logs {
+        handle_log_click(app, row);
+    } else if area_contains(app.areas.traces, col, row) && app.tab == Tab::Traces {
+        handle_trace_click(app, row, client).await;
     }
+}
 
-    if area_contains(app.areas.sidebar, col, row) {
-        app.sidebar_focused = true;
-        if let Some(idx) = row_in_area(app.areas.sidebar, row) {
-            app.sidebar_scroll = idx;
-            let items = app.sidebar_items();
-            if let Some(SidebarItem::Value { label, value, .. }) = items.get(idx) {
-                let label = label.clone();
-                let value = value.clone();
-                app.toggle_label(&label, &value);
-                app.log_cursor = 0;
-            }
-        }
+fn handle_sidebar_click(app: &mut App, row: u16) {
+    app.sidebar_focused = true;
+    let Some(idx) = row_in_area(app.areas.sidebar, row) else {
         return;
+    };
+    app.sidebar_scroll = idx;
+    let items = app.sidebar_items();
+    if let Some(SidebarItem::Value { label, value, .. }) = items.get(idx) {
+        let label = label.clone();
+        let value = value.clone();
+        app.toggle_label(&label, &value);
+        app.log_cursor = 0;
     }
+}
 
-    if area_contains(app.areas.log_list, col, row) && app.tab == Tab::Logs {
-        app.sidebar_focused = false;
-        if let Some(idx) = row_in_area(app.areas.log_list, row) {
-            let start = if app.log_cursor >= app.areas.log_list.height.saturating_sub(2) as usize {
-                app.log_cursor - app.areas.log_list.height.saturating_sub(2) as usize + 1
-            } else {
-                0
-            };
-            let clicked_log = start + idx;
-            let max = app.filtered_logs().len().saturating_sub(1);
-            app.log_cursor = clicked_log.min(max);
-            app.select_current_log();
-        }
+fn handle_log_click(app: &mut App, row: u16) {
+    app.sidebar_focused = false;
+    let Some(idx) = row_in_area(app.areas.log_list, row) else {
         return;
-    }
+    };
+    let visible_height = app.areas.log_list.height.saturating_sub(2) as usize;
+    let start = if app.log_cursor >= visible_height {
+        app.log_cursor - visible_height + 1
+    } else {
+        0
+    };
+    let clicked = start + idx;
+    let max = app.filtered_logs().len().saturating_sub(1);
+    app.log_cursor = clicked.min(max);
+    app.select_current_log();
+}
 
-    if area_contains(app.areas.traces, col, row) && app.tab == Tab::Traces {
-        app.sidebar_focused = false;
-        if let Some(idx) = row_in_area(app.areas.traces, row) {
-            let clicked_trace = app
-                .trace_scroll
-                .min(app.unique_traces().len().saturating_sub(1))
-                + idx;
-            let max = app.unique_traces().len().saturating_sub(1);
-            app.trace_scroll = clicked_trace.min(max);
-            handle_enter(app, client).await;
-        }
-    }
+async fn handle_trace_click(app: &mut App, row: u16, client: &ApiClient) {
+    app.sidebar_focused = false;
+    let Some(idx) = row_in_area(app.areas.traces, row) else {
+        return;
+    };
+    let scroll_base = app
+        .trace_scroll
+        .min(app.unique_traces().len().saturating_sub(1));
+    let clicked = scroll_base + idx;
+    let max = app.unique_traces().len().saturating_sub(1);
+    app.trace_scroll = clicked.min(max);
+    handle_enter(app, client).await;
 }
 
 fn handle_level_click(app: &mut App, col: u16) {
@@ -385,7 +393,7 @@ fn handle_level_click(app: &mut App, col: u16) {
 fn handle_header_click(app: &mut App, col: u16) {
     let area = app.areas.header;
     let rel_col = col.saturating_sub(area.x + 1);
-    if rel_col < 8 {
+    if rel_col < HEADER_LOGS_TAB_WIDTH {
         app.tab = Tab::Logs;
     } else {
         app.tab = Tab::Traces;
