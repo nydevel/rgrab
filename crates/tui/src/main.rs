@@ -1,5 +1,6 @@
 mod app;
 mod client;
+mod config;
 mod ui;
 mod ui_traces;
 
@@ -7,6 +8,7 @@ use std::io;
 use std::time::Duration;
 
 use anyhow::Result;
+use clap::Parser;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -18,13 +20,22 @@ use ratatui::backend::CrosstermBackend;
 use app::{App, InputMode, SidebarItem, Tab};
 use client::ApiClient;
 
+#[derive(Parser)]
+#[command(name = "rgrab-tui", about = "rgrab TUI client")]
+struct Cli {
+    /// Server URL to connect to
+    #[arg(short, long)]
+    server: Option<String>,
+}
+
 const SCROLL_LINES: usize = 3;
 const HEADER_LOGS_TAB_WIDTH: u16 = 8;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let server = parse_server_arg();
-    let client = ApiClient::new(&server);
+    let cli = Cli::parse();
+    let cfg = config::load(cli.server);
+    let client = ApiClient::new(&cfg.server);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -47,26 +58,6 @@ async fn main() -> Result<()> {
     terminal.show_cursor()?;
 
     result
-}
-
-fn parse_server_arg() -> String {
-    let args: Vec<String> = std::env::args().collect();
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--server" => {
-                if i + 1 < args.len() {
-                    return args[i + 1].clone();
-                }
-            }
-            s if s.starts_with("--server=") => {
-                return s.trim_start_matches("--server=").to_string();
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    "http://localhost:3000".to_string()
 }
 
 async fn run(

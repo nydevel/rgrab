@@ -17,3 +17,6 @@ chrono = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 reqwest = { workspace = true }
+toml = { workspace = true }
+dirs = { workspace = true }
+clap = { workspace = true }
