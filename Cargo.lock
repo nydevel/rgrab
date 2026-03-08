@@ -451,7 +451,7 @@ checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
 
 [[package]]
 name = "collector"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "axum 0.8.8",
@@ -474,7 +474,7 @@ checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 
 [[package]]
 name = "common"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "regex",
@@ -626,7 +626,7 @@ dependencies = [
 
 [[package]]
 name = "docker-collector"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "bollard",
  "chrono",
@@ -1915,7 +1915,7 @@ dependencies = [
 
 [[package]]
 name = "rgrab-tests"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2207,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "axum 0.8.8",
@@ -2317,7 +2317,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "storage"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2787,7 +2787,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tui"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3032,7 +3032,7 @@ dependencies = [
 
 [[package]]
 name = "web"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "axum 0.8.8",
