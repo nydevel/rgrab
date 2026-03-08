@@ -2,6 +2,7 @@ use anyhow::Result;
 use common::log::LogEntry;
 use common::span::Span;
 
+#[derive(Clone)]
 pub struct ApiClient {
     base_url: String,
     client: reqwest::Client,

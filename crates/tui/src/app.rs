@@ -146,66 +146,6 @@ impl App {
         self.level_enabled[level_index(level)]
     }
 
-    pub async fn refresh(&mut self, client: &ApiClient) {
-        self.error = None;
-
-        match client.fetch_logs(self.page_size, 0).await {
-            Ok(logs) => {
-                self.connected = true;
-                self.has_more = logs.len() >= self.page_size;
-                self.logs = logs;
-            }
-            Err(e) => {
-                self.connected = false;
-                self.error = Some(format!("{e}"));
-                return;
-            }
-        }
-
-        match client.fetch_traces(self.page_size).await {
-            Ok(traces) => self.traces = traces,
-            Err(e) => self.error = Some(format!("traces: {e}")),
-        }
-
-        match client.fetch_labels().await {
-            Ok(labels) => {
-                self.labels = labels;
-                self.refresh_label_values(client).await;
-            }
-            Err(e) => {
-                if self.error.is_none() {
-                    self.error = Some(format!("labels: {e}"));
-                }
-            }
-        }
-    }
-
-    pub async fn load_more(&mut self, client: &ApiClient) {
-        if !self.has_more {
-            return;
-        }
-        let offset = self.logs.len();
-        match client.fetch_logs(self.page_size, offset).await {
-            Ok(logs) => {
-                self.has_more = logs.len() >= self.page_size;
-                self.logs.extend(logs);
-            }
-            Err(e) => {
-                self.error = Some(format!("{e}"));
-            }
-        }
-    }
-
-    async fn refresh_label_values(&mut self, client: &ApiClient) {
-        const SIDEBAR_LABELS: &[&str] = &["service", "environment"];
-
-        for label in SIDEBAR_LABELS {
-            if let Ok(values) = client.fetch_label_values(label).await {
-                self.label_values.insert((*label).to_string(), values);
-            }
-        }
-    }
-
     pub async fn expand_trace(&mut self, client: &ApiClient, trace_id: &str) {
         if !self.trace_spans.contains_key(trace_id)
             && let Ok(spans) = client.fetch_trace(trace_id).await
@@ -216,18 +156,25 @@ impl App {
     }
 
     pub fn filtered_logs(&self) -> Vec<&LogEntry> {
-        let mut result: Vec<&LogEntry> = self
-            .logs
+        if self.newest_first {
+            self.logs
+                .iter()
+                .filter(|log| self.log_matches_filters(log))
+                .collect()
+        } else {
+            self.logs
+                .iter()
+                .rev()
+                .filter(|log| self.log_matches_filters(log))
+                .collect()
+        }
+    }
+
+    pub fn filtered_log_count(&self) -> usize {
+        self.logs
             .iter()
             .filter(|log| self.log_matches_filters(log))
-            .collect();
-
-        if self.newest_first {
-            result.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-        } else {
-            result.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-        }
-        result
+            .count()
     }
 
     fn log_matches_filters(&self, log: &LogEntry) -> bool {

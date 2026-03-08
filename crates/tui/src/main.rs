@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
+use common::log::LogEntry;
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
@@ -18,9 +19,20 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use tokio::sync::mpsc;
 
 use app::{App, InputMode, SidebarItem, Tab};
 use client::ApiClient;
+
+enum BgResult {
+    Logs {
+        logs: Vec<LogEntry>,
+        is_refresh: bool,
+    },
+    Traces(Vec<common::span::Span>),
+    Labels(Vec<String>),
+    LabelValues(String, Vec<String>),
+}
 
 #[derive(Parser)]
 #[command(name = "rgrab-tui", about = "rgrab TUI client")]
@@ -67,29 +79,35 @@ async fn run(
 ) -> Result<()> {
     let mut app = App::new(servers);
     let mut client = ApiClient::new(app.server_url());
-    app.refresh(&client).await;
+    let (tx, mut rx) = mpsc::channel::<BgResult>(16);
+
+    spawn_refresh(&client, &app, &tx);
 
     let refresh_interval = Duration::from_secs(2);
     let mut last_refresh = std::time::Instant::now();
     let poll_timeout = Duration::from_millis(50);
 
     loop {
+        while let Ok(result) = rx.try_recv() {
+            apply_bg_result(&mut app, result);
+        }
+
         terminal.draw(|f| ui::draw(f, &mut app))?;
 
         if app.server_changed {
             app.server_changed = false;
             client = ApiClient::new(app.server_url());
-            app.refresh(&client).await;
+            spawn_refresh(&client, &app, &tx);
             last_refresh = std::time::Instant::now();
         }
 
         if event::poll(poll_timeout)? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    handle_input(&mut app, key, &client).await;
+                    handle_input(&mut app, key, &client, &tx).await;
                 }
                 Event::Mouse(mouse) => {
-                    handle_mouse(&mut app, mouse, &client).await;
+                    handle_mouse(&mut app, mouse, &client, &tx);
                 }
                 _ => {}
             }
@@ -100,7 +118,7 @@ async fn run(
         }
 
         if app.live_tail && last_refresh.elapsed() >= refresh_interval {
-            app.refresh(&client).await;
+            spawn_refresh(&client, &app, &tx);
             last_refresh = std::time::Instant::now();
         }
     }
@@ -108,7 +126,77 @@ async fn run(
     Ok(())
 }
 
-async fn handle_input(app: &mut App, key: KeyEvent, client: &ApiClient) {
+fn spawn_refresh(client: &ApiClient, app: &App, tx: &mpsc::Sender<BgResult>) {
+    let c = client.clone();
+    let page_size = app.page_size;
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        if let Ok(logs) = c.fetch_logs(page_size, 0).await {
+            let _ = tx
+                .send(BgResult::Logs {
+                    logs,
+                    is_refresh: true,
+                })
+                .await;
+        }
+        if let Ok(traces) = c.fetch_traces(page_size).await {
+            let _ = tx.send(BgResult::Traces(traces)).await;
+        }
+        if let Ok(labels) = c.fetch_labels().await {
+            let _ = tx.send(BgResult::Labels(labels)).await;
+        }
+        for label in &["service", "environment"] {
+            if let Ok(values) = c.fetch_label_values(label).await {
+                let _ = tx
+                    .send(BgResult::LabelValues((*label).to_string(), values))
+                    .await;
+            }
+        }
+    });
+}
+
+fn spawn_load_more(client: &ApiClient, app: &App, tx: &mpsc::Sender<BgResult>) {
+    let c = client.clone();
+    let page_size = app.page_size;
+    let offset = app.logs.len();
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        if let Ok(logs) = c.fetch_logs(page_size, offset).await {
+            let _ = tx
+                .send(BgResult::Logs {
+                    logs,
+                    is_refresh: false,
+                })
+                .await;
+        }
+    });
+}
+
+fn apply_bg_result(app: &mut App, result: BgResult) {
+    match result {
+        BgResult::Logs { logs, is_refresh } => {
+            app.connected = true;
+            app.has_more = logs.len() >= app.page_size;
+            if is_refresh {
+                app.logs = logs;
+            } else {
+                app.logs.extend(logs);
+            }
+        }
+        BgResult::Traces(traces) => app.traces = traces,
+        BgResult::Labels(labels) => app.labels = labels,
+        BgResult::LabelValues(name, values) => {
+            app.label_values.insert(name, values);
+        }
+    }
+}
+
+async fn handle_input(
+    app: &mut App,
+    key: KeyEvent,
+    client: &ApiClient,
+    tx: &mpsc::Sender<BgResult>,
+) {
     if key.modifiers.contains(KeyModifiers::CONTROL)
         && let KeyCode::Char(c @ '1'..='9') = key.code
     {
@@ -118,7 +206,7 @@ async fn handle_input(app: &mut App, key: KeyEvent, client: &ApiClient) {
     }
     match app.input_mode {
         InputMode::Search => handle_search_input(app, key.code),
-        InputMode::Normal => handle_normal_input(app, key.code, client).await,
+        InputMode::Normal => handle_normal_input(app, key.code, client, tx).await,
     }
 }
 
@@ -141,25 +229,36 @@ fn handle_search_input(app: &mut App, code: KeyCode) {
     }
 }
 
-async fn handle_normal_input(app: &mut App, code: KeyCode, client: &ApiClient) {
+async fn handle_normal_input(
+    app: &mut App,
+    code: KeyCode,
+    client: &ApiClient,
+    tx: &mpsc::Sender<BgResult>,
+) {
     match code {
         KeyCode::Char('q') => app.should_quit = true,
         KeyCode::Tab => app.tab = toggle_tab(app.tab),
         KeyCode::Char('/') => start_search(app),
         KeyCode::Char('j') | KeyCode::Down => {
             scroll_down(app, 1);
-            maybe_load_more(app, client).await;
+            if should_load_more(app) {
+                spawn_load_more(client, app, tx);
+            }
         }
         KeyCode::Char('k') | KeyCode::Up => scroll_up(app, 1),
         KeyCode::PageDown => {
             scroll_down(app, page_size(app));
-            maybe_load_more(app, client).await;
+            if should_load_more(app) {
+                spawn_load_more(client, app, tx);
+            }
         }
         KeyCode::PageUp => scroll_up(app, page_size(app)),
         KeyCode::Home => scroll_to_top(app),
         KeyCode::End => {
             scroll_to_end(app);
-            maybe_load_more(app, client).await;
+            if should_load_more(app) {
+                spawn_load_more(client, app, tx);
+            }
         }
         KeyCode::Char('h') | KeyCode::Left => app.sidebar_focused = true,
         KeyCode::Char('l') | KeyCode::Right => app.sidebar_focused = false,
@@ -167,7 +266,7 @@ async fn handle_normal_input(app: &mut App, code: KeyCode, client: &ApiClient) {
         KeyCode::Enter => handle_enter(app, client).await,
         KeyCode::Esc => handle_esc(app),
         KeyCode::Char('L') => app.live_tail = !app.live_tail,
-        KeyCode::Char('r') => app.refresh(client).await,
+        KeyCode::Char('r') => spawn_refresh(client, app, tx),
         KeyCode::Char('s') => toggle_sort(app),
         _ => {}
     }
@@ -198,18 +297,16 @@ fn handle_esc(app: &mut App) {
 
 const LOAD_MORE_THRESHOLD: usize = 50;
 
-async fn maybe_load_more(app: &mut App, client: &ApiClient) {
+fn should_load_more(app: &App) -> bool {
     if app.tab != Tab::Logs || !app.has_more || app.sidebar_focused {
-        return;
+        return false;
     }
-    let filtered_len = app.filtered_logs().len();
+    let filtered_len = app.filtered_log_count();
     if filtered_len == 0 {
-        return;
+        return false;
     }
     let remaining = filtered_len.saturating_sub(app.log_cursor + 1);
-    if remaining < LOAD_MORE_THRESHOLD {
-        app.load_more(client).await;
-    }
+    remaining < LOAD_MORE_THRESHOLD
 }
 
 fn toggle_sort(app: &mut App) {
@@ -224,7 +321,7 @@ fn scroll_down(app: &mut App, count: usize) {
     } else {
         match app.tab {
             Tab::Logs => {
-                let max = app.filtered_logs().len().saturating_sub(1);
+                let max = app.filtered_log_count().saturating_sub(1);
                 app.log_cursor = (app.log_cursor + count).min(max);
             }
             Tab::Traces => {
@@ -262,7 +359,7 @@ fn scroll_to_end(app: &mut App) {
         app.sidebar_scroll = app.sidebar_items().len().saturating_sub(1);
     } else {
         match app.tab {
-            Tab::Logs => app.log_cursor = app.filtered_logs().len().saturating_sub(1),
+            Tab::Logs => app.log_cursor = app.filtered_log_count().saturating_sub(1),
             Tab::Traces => app.trace_scroll = app.unique_traces().len().saturating_sub(1),
         }
     }
@@ -284,7 +381,12 @@ fn row_in_area(area: ratatui::layout::Rect, row: u16) -> Option<usize> {
     }
 }
 
-async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent, client: &ApiClient) {
+fn handle_mouse(
+    app: &mut App,
+    mouse: crossterm::event::MouseEvent,
+    client: &ApiClient,
+    tx: &mpsc::Sender<BgResult>,
+) {
     let col = mouse.column;
     let row = mouse.row;
 
@@ -292,9 +394,11 @@ async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent, client
         MouseEventKind::ScrollUp => handle_mouse_scroll(app, col, row, true),
         MouseEventKind::ScrollDown => {
             handle_mouse_scroll(app, col, row, false);
-            maybe_load_more(app, client).await;
+            if should_load_more(app) {
+                spawn_load_more(client, app, tx);
+            }
         }
-        MouseEventKind::Down(MouseButton::Left) => handle_mouse_click(app, col, row, client).await,
+        MouseEventKind::Down(MouseButton::Left) => handle_mouse_click_sync(app, col, row),
         _ => {}
     }
 }
@@ -323,7 +427,7 @@ fn scroll_log_list(app: &mut App, count: usize, up: bool) {
     if up {
         app.log_cursor = app.log_cursor.saturating_sub(count);
     } else {
-        let max = app.filtered_logs().len().saturating_sub(1);
+        let max = app.filtered_log_count().saturating_sub(1);
         app.log_cursor = (app.log_cursor + count).min(max);
     }
 }
@@ -337,7 +441,7 @@ fn scroll_trace_list(app: &mut App, count: usize, up: bool) {
     }
 }
 
-async fn handle_mouse_click(app: &mut App, col: u16, row: u16, client: &ApiClient) {
+fn handle_mouse_click_sync(app: &mut App, col: u16, row: u16) {
     if area_contains(app.areas.server_panel, col, row) {
         handle_server_panel_click(app, row);
     } else if area_contains(app.areas.header, col, row) {
@@ -349,7 +453,7 @@ async fn handle_mouse_click(app: &mut App, col: u16, row: u16, client: &ApiClien
     } else if area_contains(app.areas.log_list, col, row) && app.tab == Tab::Logs {
         handle_log_click(app, row);
     } else if area_contains(app.areas.traces, col, row) && app.tab == Tab::Traces {
-        handle_trace_click(app, row, client).await;
+        handle_trace_click_sync(app, row);
     }
 }
 
@@ -391,12 +495,12 @@ fn handle_log_click(app: &mut App, row: u16) {
         0
     };
     let clicked = start + idx;
-    let max = app.filtered_logs().len().saturating_sub(1);
+    let max = app.filtered_log_count().saturating_sub(1);
     app.log_cursor = clicked.min(max);
     app.select_current_log();
 }
 
-async fn handle_trace_click(app: &mut App, row: u16, client: &ApiClient) {
+fn handle_trace_click_sync(app: &mut App, row: u16) {
     app.sidebar_focused = false;
     let Some(idx) = row_in_area(app.areas.traces, row) else {
         return;
@@ -407,7 +511,6 @@ async fn handle_trace_click(app: &mut App, row: u16, client: &ApiClient) {
     let clicked = scroll_base + idx;
     let max = app.unique_traces().len().saturating_sub(1);
     app.trace_scroll = clicked.min(max);
-    handle_enter(app, client).await;
 }
 
 fn handle_level_click(app: &mut App, col: u16) {
