@@ -99,8 +99,9 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     };
     let server_name = app.server_name();
 
+    let version = env!("CARGO_PKG_VERSION");
     let header_block = Block::default()
-        .title(format!(" rgrab [{server_name}]{live}{loaded_str} "))
+        .title(format!(" rgrab v{version} [{server_name}]{live}{loaded_str} "))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 

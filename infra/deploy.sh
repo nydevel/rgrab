@@ -21,7 +21,7 @@ DEB=$(ls -t target/debian/*.deb | head -1)
 echo "=== Deploying $DEB ==="
 
 scp "$DEB" "$TARGET:/tmp/rgrab.deb"
-ssh "$TARGET" 'dpkg -i /tmp/rgrab.deb && systemctl restart rgrab && rm /tmp/rgrab.deb'
+ssh "$TARGET" 'DEBIAN_FRONTEND=noninteractive dpkg --force-confold -i /tmp/rgrab.deb && systemctl restart rgrab && rm /tmp/rgrab.deb'
 
 echo "=== Done ==="
 ssh "$TARGET" 'systemctl status rgrab --no-pager'
