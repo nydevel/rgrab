@@ -146,12 +146,21 @@ async fn handle_normal_input(app: &mut App, code: KeyCode, client: &ApiClient) {
         KeyCode::Char('q') => app.should_quit = true,
         KeyCode::Tab => app.tab = toggle_tab(app.tab),
         KeyCode::Char('/') => start_search(app),
-        KeyCode::Char('j') | KeyCode::Down => scroll_down(app, 1),
+        KeyCode::Char('j') | KeyCode::Down => {
+            scroll_down(app, 1);
+            maybe_load_more(app, client).await;
+        }
         KeyCode::Char('k') | KeyCode::Up => scroll_up(app, 1),
-        KeyCode::PageDown => scroll_down(app, page_size(app)),
+        KeyCode::PageDown => {
+            scroll_down(app, page_size(app));
+            maybe_load_more(app, client).await;
+        }
         KeyCode::PageUp => scroll_up(app, page_size(app)),
         KeyCode::Home => scroll_to_top(app),
-        KeyCode::End => scroll_to_end(app),
+        KeyCode::End => {
+            scroll_to_end(app);
+            maybe_load_more(app, client).await;
+        }
         KeyCode::Char('h') | KeyCode::Left => app.sidebar_focused = true,
         KeyCode::Char('l') | KeyCode::Right => app.sidebar_focused = false,
         KeyCode::Char(c @ '1'..='6') => app.toggle_level((c as usize) - ('1' as usize)),
@@ -159,8 +168,6 @@ async fn handle_normal_input(app: &mut App, code: KeyCode, client: &ApiClient) {
         KeyCode::Esc => handle_esc(app),
         KeyCode::Char('L') => app.live_tail = !app.live_tail,
         KeyCode::Char('r') => app.refresh(client).await,
-        KeyCode::Char('+') | KeyCode::Char('=') => adjust_limit(app, client, 100).await,
-        KeyCode::Char('-') => adjust_limit(app, client, -100).await,
         KeyCode::Char('s') => toggle_sort(app),
         _ => {}
     }
@@ -189,16 +196,20 @@ fn handle_esc(app: &mut App) {
     }
 }
 
-async fn adjust_limit(app: &mut App, client: &ApiClient, delta: i64) {
-    if delta > 0 {
-        app.limit = (app.limit + delta as usize).min(10000);
-    } else {
-        app.limit = app
-            .limit
-            .saturating_sub(delta.unsigned_abs() as usize)
-            .max(50);
+const LOAD_MORE_THRESHOLD: usize = 50;
+
+async fn maybe_load_more(app: &mut App, client: &ApiClient) {
+    if app.tab != Tab::Logs || !app.has_more || app.sidebar_focused {
+        return;
     }
-    app.refresh(client).await;
+    let filtered_len = app.filtered_logs().len();
+    if filtered_len == 0 {
+        return;
+    }
+    let remaining = filtered_len.saturating_sub(app.log_cursor + 1);
+    if remaining < LOAD_MORE_THRESHOLD {
+        app.load_more(client).await;
+    }
 }
 
 fn toggle_sort(app: &mut App) {
@@ -258,7 +269,7 @@ fn scroll_to_end(app: &mut App) {
 }
 
 fn page_size(app: &App) -> usize {
-    app.limit.min(20)
+    app.page_size.min(20)
 }
 
 fn area_contains(area: ratatui::layout::Rect, col: u16, row: u16) -> bool {
@@ -279,7 +290,10 @@ async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent, client
 
     match mouse.kind {
         MouseEventKind::ScrollUp => handle_mouse_scroll(app, col, row, true),
-        MouseEventKind::ScrollDown => handle_mouse_scroll(app, col, row, false),
+        MouseEventKind::ScrollDown => {
+            handle_mouse_scroll(app, col, row, false);
+            maybe_load_more(app, client).await;
+        }
         MouseEventKind::Down(MouseButton::Left) => handle_mouse_click(app, col, row, client).await,
         _ => {}
     }

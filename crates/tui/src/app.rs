@@ -57,7 +57,8 @@ pub struct App {
     pub sidebar_focused: bool,
     pub expanded_trace: Option<String>,
     pub live_tail: bool,
-    pub limit: usize,
+    pub page_size: usize,
+    pub has_more: bool,
     pub should_quit: bool,
     pub error: Option<String>,
     pub connected: bool,
@@ -88,7 +89,8 @@ impl App {
             sidebar_focused: false,
             expanded_trace: None,
             live_tail: true,
-            limit: 200,
+            page_size: 200,
+            has_more: true,
             should_quit: false,
             error: None,
             connected: false,
@@ -128,6 +130,7 @@ impl App {
         self.sidebar_scroll = 0;
         self.expanded_trace = None;
         self.selected_log_idx = None;
+        self.has_more = true;
         self.error = None;
         self.connected = false;
     }
@@ -146,9 +149,10 @@ impl App {
     pub async fn refresh(&mut self, client: &ApiClient) {
         self.error = None;
 
-        match client.fetch_logs(self.limit).await {
+        match client.fetch_logs(self.page_size, 0).await {
             Ok(logs) => {
                 self.connected = true;
+                self.has_more = logs.len() >= self.page_size;
                 self.logs = logs;
             }
             Err(e) => {
@@ -158,7 +162,7 @@ impl App {
             }
         }
 
-        match client.fetch_traces(self.limit).await {
+        match client.fetch_traces(self.page_size).await {
             Ok(traces) => self.traces = traces,
             Err(e) => self.error = Some(format!("traces: {e}")),
         }
@@ -172,6 +176,22 @@ impl App {
                 if self.error.is_none() {
                     self.error = Some(format!("labels: {e}"));
                 }
+            }
+        }
+    }
+
+    pub async fn load_more(&mut self, client: &ApiClient) {
+        if !self.has_more {
+            return;
+        }
+        let offset = self.logs.len();
+        match client.fetch_logs(self.page_size, offset).await {
+            Ok(logs) => {
+                self.has_more = logs.len() >= self.page_size;
+                self.logs.extend(logs);
+            }
+            Err(e) => {
+                self.error = Some(format!("{e}"));
             }
         }
     }

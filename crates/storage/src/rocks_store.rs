@@ -51,9 +51,9 @@ impl RocksStore {
         tokio::task::spawn_blocking(move || this.insert_span_sync(&span)).await?
     }
 
-    pub async fn query_logs(&self, limit: usize) -> Result<Vec<LogEntry>> {
+    pub async fn query_logs(&self, limit: usize, offset: usize) -> Result<Vec<LogEntry>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.query_logs_sync(limit)).await?
+        tokio::task::spawn_blocking(move || this.query_logs_sync(limit, offset)).await?
     }
 
     pub async fn query_spans(&self, trace_id: String) -> Result<Vec<Span>> {
@@ -119,11 +119,11 @@ impl RocksStore {
         Ok(())
     }
 
-    fn query_logs_sync(&self, limit: usize) -> Result<Vec<LogEntry>> {
+    fn query_logs_sync(&self, limit: usize, offset: usize) -> Result<Vec<LogEntry>> {
         let cf = self.db.cf_handle(CF_LOGS).context("logs CF missing")?;
         let iter = self.db.iterator_cf(&cf, IteratorMode::End);
         let mut results = Vec::with_capacity(limit);
-        for item in iter.take(limit) {
+        for item in iter.skip(offset).take(limit) {
             let (_, value) = item?;
             results.push(serde_json::from_slice(&value)?);
         }

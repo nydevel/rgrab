@@ -20,8 +20,8 @@ impl ApiClient {
         }
     }
 
-    pub async fn fetch_logs(&self, limit: usize) -> Result<Vec<LogEntry>> {
-        let url = format!("{}/api/logs?limit={limit}", self.base_url);
+    pub async fn fetch_logs(&self, limit: usize, offset: usize) -> Result<Vec<LogEntry>> {
+        let url = format!("{}/api/logs?limit={limit}&offset={offset}", self.base_url);
         let resp = self.client.get(&url).send().await?.json().await?;
         Ok(resp)
     }

@@ -26,9 +26,15 @@ impl InMemoryStore {
         Ok(())
     }
 
-    pub async fn query_logs(&self, limit: usize) -> Result<Vec<LogEntry>> {
+    pub async fn query_logs(&self, limit: usize, offset: usize) -> Result<Vec<LogEntry>> {
         let logs = self.logs.read().await;
-        let result: Vec<_> = logs.iter().rev().take(limit).cloned().collect();
+        let result: Vec<_> = logs
+            .iter()
+            .rev()
+            .skip(offset)
+            .take(limit)
+            .cloned()
+            .collect();
         Ok(result)
     }
 

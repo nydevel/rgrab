@@ -50,7 +50,7 @@ async fn should_insert_and_query_logs() {
         .await
         .unwrap();
 
-    let logs = store.query_logs(10).await.unwrap();
+    let logs = store.query_logs(10, 0).await.unwrap();
     assert_eq!(logs.len(), 2);
 
     std::fs::remove_dir_all(&path).ok();
@@ -68,7 +68,7 @@ async fn should_respect_query_limit() {
             .unwrap();
     }
 
-    let logs = store.query_logs(3).await.unwrap();
+    let logs = store.query_logs(3, 0).await.unwrap();
     assert_eq!(logs.len(), 3);
 
     std::fs::remove_dir_all(&path).ok();
@@ -223,7 +223,7 @@ async fn should_persist_sequence_across_reopens() {
             .await
             .unwrap();
 
-        let logs = store.query_logs(10).await.unwrap();
+        let logs = store.query_logs(10, 0).await.unwrap();
         assert_eq!(logs.len(), 2);
     }
 

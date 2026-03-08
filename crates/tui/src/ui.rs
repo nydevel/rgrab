@@ -92,11 +92,15 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     ];
 
     let live = if app.live_tail { " Live" } else { "" };
-    let limit_str = format!(" {} lines", app.limit);
+    let loaded_str = if app.has_more {
+        format!(" {}+ loaded", app.logs.len())
+    } else {
+        format!(" {} loaded", app.logs.len())
+    };
     let server_name = app.server_name();
 
     let header_block = Block::default()
-        .title(format!(" rgrab [{server_name}]{live}{limit_str} "))
+        .title(format!(" rgrab [{server_name}]{live}{loaded_str} "))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 

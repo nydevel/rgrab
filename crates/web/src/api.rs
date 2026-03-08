@@ -17,6 +17,8 @@ pub fn router(store: RocksStore) -> Router {
 struct LogsQuery {
     #[serde(default = "default_limit")]
     limit: usize,
+    #[serde(default)]
+    offset: usize,
 }
 
 #[derive(Deserialize)]
@@ -34,7 +36,7 @@ async fn get_logs(
     State(store): State<RocksStore>,
     Query(q): Query<LogsQuery>,
 ) -> Json<Vec<LogEntry>> {
-    let logs = match store.query_logs(q.limit).await {
+    let logs = match store.query_logs(q.limit, q.offset).await {
         Ok(logs) => logs,
         Err(e) => {
             tracing::error!("Failed to query logs: {e}");
